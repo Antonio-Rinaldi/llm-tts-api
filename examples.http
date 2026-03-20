@@ -1,0 +1,104 @@
+@baseUrl = http://localhost:8000
+
+### Health
+GET {{baseUrl}}/health
+
+### Ready
+GET {{baseUrl}}/ready
+
+### Models
+GET {{baseUrl}}/v1/models
+
+### Speech (success path requires valid env voice map + existing ref audio path)
+POST {{baseUrl}}/v1/audio/speech
+Content-Type: application/json
+
+{
+  "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+  "input": "Ciao, questo è un test di sintesi vocale.",
+  "voice": "alloy",
+  "response_format": "wav"
+}
+
+### Transcriptions (currently compatibility stub -> 501)
+POST {{baseUrl}}/v1/audio/transcriptions
+
+### Translations (currently compatibility stub -> 501)
+POST {{baseUrl}}/v1/audio/translations
+
+### Create voice (stub -> 501)
+POST {{baseUrl}}/v1/audio/voices
+
+### List voice consents (stub -> 501)
+GET {{baseUrl}}/v1/audio/voice_consents
+
+### Create voice consent (stub -> 501)
+POST {{baseUrl}}/v1/audio/voice_consents
+
+### Retrieve voice consent (stub -> 501)
+GET {{baseUrl}}/v1/audio/voice_consents/cons_123
+
+### Update voice consent (stub -> 501)
+POST {{baseUrl}}/v1/audio/voice_consents/cons_123
+Content-Type: application/json
+
+{
+  "name": "Updated consent label"
+}
+
+### Delete voice consent (stub -> 501)
+DELETE {{baseUrl}}/v1/audio/voice_consents/cons_123
+
+### Create chat completion (stub -> 501)
+POST {{baseUrl}}/v1/chat/completions
+Content-Type: application/json
+
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ]
+}
+
+### List chat completions (stub -> 501)
+GET {{baseUrl}}/v1/chat/completions
+
+### Retrieve chat completion (stub -> 501)
+GET {{baseUrl}}/v1/chat/completions/chatcmpl_123
+
+### Update chat completion (stub -> 501)
+POST {{baseUrl}}/v1/chat/completions/chatcmpl_123
+Content-Type: application/json
+
+{
+  "metadata": {
+    "label": "example"
+  }
+}
+
+### Delete chat completion (stub -> 501)
+DELETE {{baseUrl}}/v1/chat/completions/chatcmpl_123
+
+### List chat completion messages (stub -> 501)
+GET {{baseUrl}}/v1/chat/completions/chatcmpl_123/messages
+
+### Realtime client secrets (stub -> 501)
+POST {{baseUrl}}/v1/realtime/client_secrets
+
+### Realtime accept call (stub -> 501)
+POST {{baseUrl}}/v1/realtime/calls/call_123/accept
+
+### Realtime hangup call (stub -> 501)
+POST {{baseUrl}}/v1/realtime/calls/call_123/hangup
+
+### Realtime refer call (stub -> 501)
+POST {{baseUrl}}/v1/realtime/calls/call_123/refer
+
+### Realtime reject call (stub -> 501)
+POST {{baseUrl}}/v1/realtime/calls/call_123/reject
+
+### Realtime sessions (stub -> 501)
+POST {{baseUrl}}/v1/realtime/sessions
+
+### Realtime transcription sessions (stub -> 501)
+POST {{baseUrl}}/v1/realtime/transcription_sessions

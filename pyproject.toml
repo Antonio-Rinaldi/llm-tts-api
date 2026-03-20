@@ -1,0 +1,55 @@
+[project]
+name = "qwen-tts-api"
+version = "0.1.0"
+description = "OpenAI-compatible local audio API server powered by Qwen TTS."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Antonio-Rinaldi" }]
+keywords = ["fastapi", "openai-compatible", "tts", "stt", "audio", "qwen"]
+
+dependencies = [
+  "fastapi>=0.135.0",
+  "uvicorn>=0.35.0",
+  "pydantic>=2.12.0",
+  "soundfile>=0.13.0",
+  "qwen-tts>=0.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "httpx>=0.28.0",
+  "ruff>=0.6.0",
+  "mypy>=1.10.0",
+]
+
+[project.scripts]
+qwen-tts-api = "qwen_tts_api.main:run"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["qwen_tts_api*"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
