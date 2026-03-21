@@ -81,3 +81,14 @@ def test_settings_invalid_voice_map_raises(monkeypatch: pytest.MonkeyPatch) -> N
 
     with pytest.raises(ValueError):
         Settings()
+
+
+
+def test_settings_max_input_chars_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from qwen_tts_api.config import Settings
+
+    monkeypatch.setenv("QWEN_TTS_MAX_INPUT_CHARS", "8192")
+
+    settings = Settings()
+
+    assert settings.qwen_tts_max_input_chars == 8192

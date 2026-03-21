@@ -19,6 +19,7 @@ def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "QWEN_TTS_MODEL_ALLOWED",
         "QWEN_STT_MODEL_DEFAULT",
         "QWEN_STT_MODEL_ALLOWED",
+        "QWEN_TTS_MAX_INPUT_CHARS",
         "QWEN_TTS_VOICE_MAP_JSON",
         "QWEN_TTS_VOICE_MAP_FILE",
         "APP_NAME",

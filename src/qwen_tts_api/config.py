@@ -26,6 +26,7 @@ class Settings:
     qwen_stt_model_allowed: list[str] = None  # type: ignore[assignment]
 
     qwen_tts_voice_map: dict[str, VoiceConfig] = None  # type: ignore[assignment]
+    qwen_tts_max_input_chars: int = 4096
 
     def __post_init__(self) -> None:
         self.app_name = os.getenv("APP_NAME", self.app_name)
@@ -47,22 +48,26 @@ class Settings:
         else:
             self.qwen_stt_model_allowed = [self.qwen_stt_model_default]
 
-        voice_map_file = os.getenv("QWEN_TTS_VOICE_MAP_FILE", "").strip()
+        max_chars_raw = os.getenv("QWEN_TTS_MAX_INPUT_CHARS", str(self.qwen_tts_max_input_chars)).strip()
+        try:
+            self.qwen_tts_max_input_chars = int(max_chars_raw)
+        except ValueError as exc:
+            raise ValueError("QWEN_TTS_MAX_INPUT_CHARS must be an integer") from exc
+        if self.qwen_tts_max_input_chars < 256:
+            raise ValueError("QWEN_TTS_MAX_INPUT_CHARS must be >= 256")
 
-        if voice_map_file:
-            voice_map_path = Path(voice_map_file)
-            if not voice_map_path.exists() or not voice_map_path.is_file():
-                raise ValueError("QWEN_TTS_VOICE_MAP_FILE must point to an existing JSON file")
-            try:
-                raw_voice_map = json.loads(voice_map_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
-                raise ValueError("QWEN_TTS_VOICE_MAP_FILE must contain valid JSON") from exc
-        else:
-            voice_map_json = os.getenv("QWEN_TTS_VOICE_MAP_JSON", "{}").strip() or "{}"
-            try:
-                raw_voice_map = json.loads(voice_map_json)
-            except json.JSONDecodeError as exc:
-                raise ValueError("QWEN_TTS_VOICE_MAP_JSON must be valid JSON") from exc
+        voice_map_file = os.getenv("QWEN_TTS_VOICE_MAP_FILE", "").strip()
+        if not voice_map_file or voice_map_file == "":
+            raise ValueError("QWEN_TTS_VOICE_MAP_FILE env must be defined")
+
+        voice_map_path = Path(voice_map_file)
+        if not voice_map_path.exists() or not voice_map_path.is_file():
+            raise ValueError("QWEN_TTS_VOICE_MAP_FILE must point to an existing JSON file")
+
+        try:
+            raw_voice_map = json.loads(voice_map_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("QWEN_TTS_VOICE_MAP_FILE must contain valid JSON") from exc
 
         if not isinstance(raw_voice_map, dict):
             raise ValueError("Voice map must be a JSON object")

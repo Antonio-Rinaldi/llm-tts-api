@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import os
+import re
 import tempfile
+import wave
 from pathlib import Path
 
 import soundfile as sf
@@ -13,6 +16,115 @@ from qwen_tts_api.config import Settings
 from qwen_tts_api.errors import internal_error, invalid_request
 from qwen_tts_api.schemas.speech import SpeechRequest
 from qwen_tts_api.services.model_registry import ModelRegistry
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
+
+
+def split_text_semantic(text: str, max_chars: int) -> list[str]:
+    cleaned = text.strip()
+    if not cleaned:
+        return []
+
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", cleaned) if p.strip()]
+    chunks: list[str] = []
+    current = ""
+
+    def flush_current() -> None:
+        nonlocal current
+        if current.strip():
+            chunks.append(current.strip())
+        current = ""
+
+    def append_part(part: str) -> None:
+        nonlocal current
+        part = part.strip()
+        if not part:
+            return
+
+        candidate = f"{current}\n\n{part}" if current else part
+        if len(candidate) <= max_chars:
+            current = candidate
+            return
+
+        flush_current()
+
+        if len(part) <= max_chars:
+            current = part
+            return
+
+        sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(part) if s.strip()]
+        if len(sentences) <= 1:
+            for i in range(0, len(part), max_chars):
+                slice_part = part[i : i + max_chars].strip()
+                if slice_part:
+                    chunks.append(slice_part)
+            return
+
+        sentence_acc = ""
+        for sentence in sentences:
+            sentence_candidate = f"{sentence_acc} {sentence}".strip() if sentence_acc else sentence
+            if len(sentence_candidate) <= max_chars:
+                sentence_acc = sentence_candidate
+                continue
+
+            if sentence_acc:
+                chunks.append(sentence_acc.strip())
+                sentence_acc = ""
+
+            if len(sentence) <= max_chars:
+                sentence_acc = sentence
+            else:
+                for i in range(0, len(sentence), max_chars):
+                    slice_part = sentence[i : i + max_chars].strip()
+                    if slice_part:
+                        chunks.append(slice_part)
+
+        if sentence_acc.strip():
+            chunks.append(sentence_acc.strip())
+
+    for paragraph in paragraphs:
+        append_part(paragraph)
+
+    flush_current()
+    return chunks
+
+
+def _concat_wav_bytes(parts: list[bytes]) -> bytes:
+    if not parts:
+        return b""
+    if len(parts) == 1:
+        return parts[0]
+
+    frames: list[bytes] = []
+    params: tuple[int, int, int, str, str] | None = None
+
+    for item in parts:
+        with wave.open(io.BytesIO(item), "rb") as reader:
+            current_params = (
+                reader.getnchannels(),
+                reader.getsampwidth(),
+                reader.getframerate(),
+                reader.getcomptype(),
+                reader.getcompname(),
+            )
+            if params is None:
+                params = current_params
+            elif params != current_params:
+                raise internal_error("Speech generation failed: incompatible WAV chunks")
+            frames.append(reader.readframes(reader.getnframes()))
+
+    if params is None:
+        return b""
+
+    out = io.BytesIO()
+    with wave.open(out, "wb") as writer:
+        writer.setnchannels(params[0])
+        writer.setsampwidth(params[1])
+        writer.setframerate(params[2])
+        writer.setcomptype(params[3], params[4])
+        for frame in frames:
+            writer.writeframes(frame)
+    return out.getvalue()
 
 
 class TTSService:
@@ -27,9 +139,6 @@ class TTSService:
 
         from qwen_tts import Qwen3TTSModel
 
-        # On Apple Silicon (MPS), qwen-tts can fail with
-        # "unsupported scalarType" when it selects bf16/fp16.
-        # Force a safe dtype for model load.
         load_kwargs: dict[str, object] = {}
         if torch.backends.mps.is_available():
             load_kwargs["device_map"] = "mps"
@@ -69,18 +178,30 @@ class TTSService:
         if requested_format != "wav":
             raise invalid_request("Only 'wav' response_format is currently supported", param="response_format")
 
+        chunks = split_text_semantic(request.input, self.settings.qwen_tts_max_input_chars)
+        if not chunks:
+            raise invalid_request("input is required", param="input")
+
         try:
             model = self._get_model(model_name)
-            wavs, sr = model.generate_voice_clone(
-                text=request.input,
-                language=voice.language,
-                ref_audio=voice.ref_audio_path,
-                ref_text=voice.ref_text,
-            )
+            chunk_wavs: list[bytes] = []
+
+            for chunk in chunks:
+                wavs, sr = model.generate_voice_clone(
+                    text=chunk,
+                    language=voice.language,
+                    ref_audio=voice.ref_audio_path,
+                    ref_text=voice.ref_text,
+                )
+                buf = io.BytesIO()
+                sf.write(buf, wavs[0], sr, format="WAV")
+                chunk_wavs.append(buf.getvalue())
+
+            merged_wav = _concat_wav_bytes(chunk_wavs)
 
             fd, out_path = tempfile.mkstemp(suffix=".wav")
             os.close(fd)
-            sf.write(out_path, wavs[0], sr)
+            Path(out_path).write_bytes(merged_wav)
 
             return FileResponse(
                 out_path,

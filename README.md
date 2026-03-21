@@ -79,11 +79,21 @@ To make speech generation work, ensure:
 
 Note: `QWEN_TTS_VOICE_MAP_JSON` is still supported as a fallback for backward compatibility.
 
+### Configure max TTS input length
+
+The server accepts long text and chunks it semantically (paragraph/sentence boundaries). Use:
+
+```bash
+QWEN_TTS_MAX_INPUT_CHARS=4096
+```
+
+Choose a value compatible with your model/runtime limits.
+
 Load local env before running:
 
 ```bash
 set -a
-source .env.example.local
+source .env.local
 set +a
 ```
 
@@ -92,7 +102,7 @@ set +a
 ### With uvicorn
 
 ```bash
-uvicorn qwen_tts_api.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn qwen_tts_api.main:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 6000
 ```
 
 ### Without uvicorn command (debug-friendly)

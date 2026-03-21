@@ -32,8 +32,8 @@ def _load_env_file(path: Path) -> None:
 
 def _load_default_env_files() -> None:
     project_root = Path(__file__).resolve().parents[2]
-    _load_env_file(project_root / ".env.example")
-    _load_env_file(project_root / ".env.example.local")
+    _load_env_file(project_root / ".env")
+    _load_env_file(project_root / ".env.local")
 
 
 def create_app() -> FastAPI:

@@ -1,9 +1,9 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class SpeechRequest(BaseModel):
     model: str
-    input: str = Field(..., max_length=4096)
+    input: str
     voice: str
     response_format: str = "wav"
     instructions: str | None = None
