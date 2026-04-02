@@ -5,7 +5,7 @@ class ModelObject(BaseModel):
     id: str
     object: str = "model"
     created: int = 0
-    owned_by: str = "qwen-tts-api"
+    owned_by: str = "llm-tts-api"
 
 
 class ModelListResponse(BaseModel):

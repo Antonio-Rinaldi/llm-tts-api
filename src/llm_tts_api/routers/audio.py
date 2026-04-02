@@ -1,18 +1,22 @@
-from fastapi import APIRouter, Depends
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse, StreamingResponse
 
-from qwen_tts_api.dependencies import get_stt_service, get_tts_service
-from qwen_tts_api.errors import not_implemented
-from qwen_tts_api.schemas.speech import SpeechRequest
-from qwen_tts_api.services.stt_service import STTService
-from qwen_tts_api.services.tts_service import TTSService
+from llm_tts_api.dependencies import get_stt_service, get_tts_service
+from llm_tts_api.errors import not_implemented
+from llm_tts_api.schemas.speech import SpeechRequest
+from llm_tts_api.services.stt_service import STTService
+from llm_tts_api.services.tts_service import TTSService
 
 router = APIRouter(prefix="/v1/audio", tags=["audio"])
 
 
 @router.post("/speech")
-def create_speech(req: SpeechRequest, tts_service: TTSService = Depends(get_tts_service)) -> FileResponse:
-    return tts_service.create_speech(req)
+def create_speech(
+    req: SpeechRequest,
+    tts_service: TTSService = Depends(get_tts_service),
+    stream: bool = Query(False, description="If true, stream audio from memory instead of file")
+) -> FileResponse:
+    return tts_service.create_speech(req, stream=stream)
 
 
 @router.post("/transcriptions")

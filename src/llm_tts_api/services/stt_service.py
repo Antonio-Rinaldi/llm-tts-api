@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from qwen_tts_api.errors import not_implemented
+from llm_tts_api.errors import not_implemented
 
 
 class STTService:

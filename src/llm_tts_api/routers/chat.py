@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from qwen_tts_api.errors import not_implemented
+from llm_tts_api.errors import not_implemented
 
 router = APIRouter(prefix="/v1/chat", tags=["chat"])
 

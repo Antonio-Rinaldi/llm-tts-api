@@ -1,8 +1,8 @@
-# qwen-tts-api Professional Refactor Plan
+# llm-tts-api Professional Refactor Plan
 
 ## 1) Goals
 
-This plan defines a phased refactor of the current `qwen-tts-api` into a modular, professional, OpenAI-compatible service with environment-driven configuration.
+This plan defines a phased refactor of the current `llm-tts-api` into a modular, professional, OpenAI-compatible service with environment-driven configuration.
 
 Primary objectives:
 
@@ -101,7 +101,7 @@ This guarantees route compatibility now, while exposing clear unsupported behavi
 Target package layout:
 
 ```text
-qwen-tts-api/
+llm-tts-api/
   app/
     __init__.py
     main.py                      # app factory + router wiring
@@ -155,7 +155,7 @@ Configuration source: environment variables.
 
 ### 6.1 Core server
 
-- `APP_NAME` (default: `qwen-tts-api`)
+- `APP_NAME` (default: `llm-tts-api`)
 - `APP_ENV` (default: `development`)
 - `APP_LOG_LEVEL` (default: `INFO`)
 - `APP_HOST` (default: `0.0.0.0`)

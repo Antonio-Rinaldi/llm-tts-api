@@ -7,15 +7,15 @@ import tempfile
 import wave
 from pathlib import Path
 
-import soundfile as sf
-import torch
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
-from qwen_tts_api.config import Settings
-from qwen_tts_api.errors import internal_error, invalid_request
-from qwen_tts_api.schemas.speech import SpeechRequest
-from qwen_tts_api.services.model_registry import ModelRegistry
+from llm_tts_api.config import Settings
+from llm_tts_api.errors import OpenAIHTTPException, internal_error, invalid_request
+from llm_tts_api.schemas.speech import SpeechRequest
+from llm_tts_api.services.model_registry import ModelRegistry
+from llm_tts_api.services.tts_providers.base import SynthesisRequest
+from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
 
@@ -128,25 +128,16 @@ def _concat_wav_bytes(parts: list[bytes]) -> bytes:
 
 
 class TTSService:
-    def __init__(self, settings: Settings, model_registry: ModelRegistry) -> None:
+    def __init__(self, settings: Settings, model_registry: ModelRegistry, provider_registry: TTSProviderRegistry) -> None:
         self.settings = settings
         self.model_registry = model_registry
-        self._model_cache: dict[str, object] = {}
-
-    def _get_model(self, model_name: str):
-        if model_name in self._model_cache:
-            return self._model_cache[model_name]
-
-        from qwen_tts import Qwen3TTSModel
-
-        load_kwargs: dict[str, object] = {}
-        if torch.backends.mps.is_available():
-            load_kwargs["device_map"] = "mps"
-            load_kwargs["dtype"] = torch.float32
-
-        model = Qwen3TTSModel.from_pretrained(model_name, **load_kwargs)
-        self._model_cache[model_name] = model
-        return model
+        self.provider_registry = provider_registry
+        # Preload the default TTS model at startup for faster first request
+        default_provider = self.model_registry.infer_tts_provider(self.settings.tts_model_default)
+        preload_target = self.provider_registry.get(default_provider)
+        preload_model = getattr(preload_target, "preload", None)
+        if callable(preload_model):
+            preload_model(self.settings.tts_model_default)
 
     @staticmethod
     def _cleanup_file(path: str) -> None:
@@ -155,15 +146,24 @@ class TTSService:
         except OSError:
             pass
 
-    def create_speech(self, request: SpeechRequest) -> FileResponse:
+    def create_speech(self, request: SpeechRequest, stream: bool = False) -> FileResponse:
+        """
+        Generate speech audio for the given request.
+        If stream=True, return StreamingResponse (audio from memory, no disk IO).
+        Otherwise, return FileResponse (audio from temp file, auto cleanup).
+        """
         if not request.input or not request.input.strip():
             raise invalid_request("input is required", param="input")
 
-        model_name = self.model_registry.resolve_tts_model(request.model)
+        try:
+            model_name, provider = self.model_registry.resolve_tts_target(request.model, request.provider)
+        except ValueError as exc:
+            raise invalid_request(str(exc), param="provider") from exc
+
         if not self.model_registry.is_allowed_tts_model(model_name):
             raise invalid_request(f"model '{model_name}' is not allowed", param="model")
 
-        voice = self.settings.qwen_tts_voice_map.get(request.voice)
+        voice = self.settings.tts_voice_map.get(request.voice)
         if not voice:
             raise invalid_request(f"voice '{request.voice}' is not configured", param="voice")
 
@@ -178,26 +178,25 @@ class TTSService:
         if requested_format != "wav":
             raise invalid_request("Only 'wav' response_format is currently supported", param="response_format")
 
-        chunks = split_text_semantic(request.input, self.settings.qwen_tts_max_input_chars)
+        chunks = split_text_semantic(request.input, self.settings.tts_max_input_chars)
         if not chunks:
             raise invalid_request("input is required", param="input")
 
         try:
-            model = self._get_model(model_name)
-            chunk_wavs: list[bytes] = []
-
-            for chunk in chunks:
-                wavs, sr = model.generate_voice_clone(
-                    text=chunk,
-                    language=voice.language,
-                    ref_audio=voice.ref_audio_path,
-                    ref_text=voice.ref_text,
+            provider_strategy = self.provider_registry.get(provider)
+            chunk_wavs = provider_strategy.synthesize_chunks(
+                SynthesisRequest(
+                    model_name=model_name,
+                    chunks=chunks,
+                    voice=voice,
+                    response_format=requested_format,
                 )
-                buf = io.BytesIO()
-                sf.write(buf, wavs[0], sr, format="WAV")
-                chunk_wavs.append(buf.getvalue())
+            )
 
             merged_wav = _concat_wav_bytes(chunk_wavs)
+
+            if stream:
+                return StreamingResponse(io.BytesIO(merged_wav), media_type="audio/wav")
 
             fd, out_path = tempfile.mkstemp(suffix=".wav")
             os.close(fd)
@@ -209,5 +208,11 @@ class TTSService:
                 filename="speech.wav",
                 background=BackgroundTask(self._cleanup_file, out_path),
             )
+        except OpenAIHTTPException:
+            raise
         except Exception as exc:  # pragma: no cover
             raise internal_error(f"Speech generation failed: {exc}") from exc
+
+# To run with multiple workers for concurrency, use:
+# uvicorn llm_tts_api.main:app --host 0.0.0.0 --port 8000 --workers 4
+

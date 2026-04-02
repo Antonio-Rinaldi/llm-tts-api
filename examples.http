@@ -15,7 +15,20 @@ Content-Type: application/json
 
 {
   "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+  "provider": "qwen",
   "input": "Ciao, questo è un test di sintesi vocale.",
+  "voice": "alloy",
+  "response_format": "wav"
+}
+
+### Speech via Voxtral provider (requires local mlx-audio setup and allowed model)
+POST {{baseUrl}}/v1/audio/speech
+Content-Type: application/json
+
+{
+  "model": "voxtral/mini-tts",
+  "provider": "voxtral",
+  "input": "Hello, this is a Voxtral test.",
   "voice": "alloy",
   "response_format": "wav"
 }

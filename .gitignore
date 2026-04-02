@@ -10,3 +10,4 @@ build/
 .env.local
 config/voice_map.local.json
 voices/
+/resources/output/

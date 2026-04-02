@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from qwen_tts_api.errors import OpenAIHTTPException
-from qwen_tts_api.routers.audio import router as audio_router
-from qwen_tts_api.routers.chat import router as chat_router
-from qwen_tts_api.routers.health import router as health_router
-from qwen_tts_api.routers.models import router as models_router
-from qwen_tts_api.routers.realtime import router as realtime_router
+from llm_tts_api import dependencies
+from llm_tts_api.errors import OpenAIHTTPException
+from llm_tts_api.routers.audio import router as audio_router
+from llm_tts_api.routers.chat import router as chat_router
+from llm_tts_api.routers.health import router as health_router
+from llm_tts_api.routers.models import router as models_router
+from llm_tts_api.routers.realtime import router as realtime_router
 
 
 def _load_env_file(path: Path) -> None:
@@ -37,7 +39,13 @@ def _load_default_env_files() -> None:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="qwen-tts-api")
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        # Fail fast on startup if default model preload is broken.
+        dependencies.get_tts_service()
+        yield
+
+    app = FastAPI(title="llm-tts-api", lifespan=lifespan)
 
     @app.exception_handler(OpenAIHTTPException)
     async def openai_exception_handler(_, exc: OpenAIHTTPException) -> JSONResponse:
@@ -52,7 +60,7 @@ def create_app() -> FastAPI:
 
 
 def run() -> None:
-    uvicorn.run("qwen_tts_api.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("llm_tts_api.main:app", host="0.0.0.0", port=8000, reload=False)
 
 
 _load_default_env_files()
