@@ -29,11 +29,9 @@ def _build_client_with_voice(monkeypatch, tmp_path: Path, extra_env: dict[str, s
         for key, value in extra_env.items():
             monkeypatch.setenv(key, value)
 
-    from llm_tts_api.services.tts_providers.mlx_voxtral_provider import MLXVoxtralTTSProvider
-    from llm_tts_api.services.tts_providers.qwen_provider import QwenTTSProvider
+    from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSProvider
 
-    monkeypatch.setattr(QwenTTSProvider, "preload", lambda self, model_name: None)
-    monkeypatch.setattr(MLXVoxtralTTSProvider, "preload", lambda self, model_name: None)
+    monkeypatch.setattr(MLXAudioTTSProvider, "preload", lambda self, model_name: None)
 
     from llm_tts_api import dependencies
     from llm_tts_api.main import create_app
@@ -88,24 +86,24 @@ def test_speech_rejects_disallowed_model(monkeypatch, tmp_path: Path) -> None:
     assert payload["error"]["param"] == "model"
 
 
-def test_speech_voxtral_requires_dependency(monkeypatch, tmp_path: Path) -> None:
+def test_speech_mlx_audio_requires_dependency(monkeypatch, tmp_path: Path) -> None:
     client = _build_client_with_voice(monkeypatch, tmp_path, {"TTS_MODEL_ALLOWED": "voxtral/mini-tts"})
 
-    from llm_tts_api.services.tts_providers.mlx_voxtral_provider import MLXVoxtralTTSProvider
+    from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSProvider
 
     def _fake_get_model(self, model_name: str):
         _ = self
         _ = model_name
         raise invalid_request(
-            "Provider 'voxtral' requires the optional dependency 'mlx-audio'",
+            "Provider 'mlx_audio' requires the optional dependency 'mlx-audio'",
             param="provider",
         )
 
-    monkeypatch.setattr(MLXVoxtralTTSProvider, "_get_model", _fake_get_model)
+    monkeypatch.setattr(MLXAudioTTSProvider, "_get_model", _fake_get_model)
 
     response = client.post(
         "/v1/audio/speech",
-        json={"model": "voxtral/mini-tts", "provider": "voxtral", "voice": "alloy", "input": "hello"},
+        json={"model": "voxtral/mini-tts", "provider": "mlx_audio", "voice": "alloy", "input": "hello"},
     )
 
     assert response.status_code == 400

@@ -5,8 +5,7 @@ from functools import lru_cache
 from llm_tts_api.config import Settings
 from llm_tts_api.services.model_registry import ModelRegistry
 from llm_tts_api.services.stt_service import STTService
-from llm_tts_api.services.tts_providers.mlx_voxtral_provider import MLXVoxtralTTSProvider
-from llm_tts_api.services.tts_providers.qwen_provider import QwenTTSProvider
+from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSProvider
 from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 from llm_tts_api.services.tts_service import TTSService
 
@@ -34,8 +33,7 @@ def get_tts_service() -> TTSService:
 def get_tts_provider_registry() -> TTSProviderRegistry:
     return TTSProviderRegistry(
         providers=[
-            QwenTTSProvider(),
-            MLXVoxtralTTSProvider(),
+            MLXAudioTTSProvider(),
         ]
     )
 

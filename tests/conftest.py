@@ -15,6 +15,7 @@ if str(SRC) not in sys.path:
 @pytest.fixture(autouse=True)
 def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
     keys = [
+        "TTS_PROVIDER",
         "TTS_DEFAULT_PROVIDER",
         "TTS_MODEL_DEFAULT",
         "TTS_MODEL_ALLOWED",
@@ -22,7 +23,6 @@ def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "STT_MODEL_ALLOWED",
         "TTS_MAX_INPUT_CHARS",
         "TTS_VOICE_MAP_FILE",
-        "TTS_PROVIDER_MODEL_PREFIXES",
         "QWEN_TTS_MODEL_DEFAULT",
         "QWEN_TTS_MODEL_ALLOWED",
         "QWEN_STT_MODEL_DEFAULT",

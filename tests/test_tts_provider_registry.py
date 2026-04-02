@@ -13,15 +13,15 @@ class _FakeProvider:
 
 
 def test_registry_returns_registered_provider() -> None:
-    registry = TTSProviderRegistry([_FakeProvider("qwen")])
+    registry = TTSProviderRegistry([_FakeProvider("mlx_audio")])
 
-    provider = registry.get("qwen")
+    provider = registry.get("mlx_audio")
 
-    assert provider.provider_name == "qwen"
+    assert provider.provider_name == "mlx_audio"
 
 
 def test_registry_rejects_unknown_provider() -> None:
-    registry = TTSProviderRegistry([_FakeProvider("qwen")])
+    registry = TTSProviderRegistry([_FakeProvider("mlx_audio")])
 
     try:
         registry.get("unknown")

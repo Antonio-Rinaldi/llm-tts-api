@@ -31,6 +31,7 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert settings.app_name == "llm-tts-api"
     assert settings.tts_model_default == "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
     assert settings.tts_model_allowed == ["Qwen/Qwen3-TTS-12Hz-0.6B-Base"]
+    assert settings.tts_provider == "mlx_audio"
 
 
 def test_settings_allowed_models_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -91,12 +92,12 @@ def test_settings_max_input_chars_from_env(monkeypatch: pytest.MonkeyPatch, tmp_
     assert settings.tts_max_input_chars == 8192
 
 
-def test_settings_provider_prefixes_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_settings_provider_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from llm_tts_api.config import Settings
 
     monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
-    monkeypatch.setenv("TTS_PROVIDER_MODEL_PREFIXES", '{"voxtral": ["voxtral/", "mistral/"], "qwen": ["qwen/"]}')
+    monkeypatch.setenv("TTS_PROVIDER", "mlx_audio")
 
     settings = Settings()
 
-    assert settings.tts_provider_model_prefixes["voxtral"] == ["voxtral/", "mistral/"]
+    assert settings.tts_provider == "mlx_audio"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 import tempfile
@@ -19,6 +20,7 @@ from llm_tts_api.services.tts_providers.base import SynthesisRequest
 from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
+logger = logging.getLogger(__name__)
 
 
 def split_text_semantic(text: str, max_chars: int) -> list[str]:
@@ -140,7 +142,7 @@ class TTSService:
             raise ValueError("TTS_MAX_CONCURRENT_REQUESTS must be an integer >= 1") from exc
         self._synthesis_semaphore = threading.Semaphore(self._max_concurrent_requests)
         # Preload the default TTS model at startup for faster first request
-        default_provider = self.model_registry.infer_tts_provider(self.settings.tts_model_default)
+        default_provider = self.settings.tts_provider
         preload_target = self.provider_registry.get(default_provider)
         preload_model = getattr(preload_target, "preload", None)
         if callable(preload_model):
@@ -174,7 +176,7 @@ class TTSService:
         if not voice:
             raise invalid_request(f"voice '{request.voice}' is not configured", param="voice")
 
-        if not Path(voice.ref_audio_path).exists():
+        if voice.ref_audio_path and not Path(voice.ref_audio_path).exists():
             raise invalid_request(
                 f"voice '{request.voice}' reference audio path does not exist",
                 param="voice",
@@ -220,6 +222,14 @@ class TTSService:
         except OpenAIHTTPException:
             raise
         except Exception as exc:  # pragma: no cover
+            logger.exception(
+                "Speech generation failed | model=%s provider=%s voice=%s stream=%s error=%s",
+                model_name,
+                provider,
+                request.voice,
+                stream,
+                exc,
+            )
             raise internal_error(f"Speech generation failed: {exc}") from exc
 
 # To run with multiple workers for concurrency, use:

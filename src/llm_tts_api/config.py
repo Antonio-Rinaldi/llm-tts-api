@@ -21,13 +21,7 @@ class Settings:
 
     tts_model_default: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
     tts_model_allowed: list[str] = field(default_factory=list)
-    tts_default_provider: str = "qwen"
-    tts_provider_model_prefixes: dict[str, list[str]] = field(
-        default_factory=lambda: {
-            "voxtral": ["voxtral/", "mistral/", "mistralai/"],
-            "qwen": ["qwen/"],
-        }
-    )
+    tts_provider: str = "mlx_audio"
 
     stt_model_default: str = "whisper-1"
     stt_model_allowed: list[str] = field(default_factory=list)
@@ -40,9 +34,10 @@ class Settings:
         self.app_env = os.getenv("APP_ENV", self.app_env)
         self.app_log_level = os.getenv("APP_LOG_LEVEL", self.app_log_level)
 
-        self.tts_default_provider = os.getenv("TTS_DEFAULT_PROVIDER", self.tts_default_provider).strip().lower()
-        if self.tts_default_provider not in {"qwen", "voxtral"}:
-            raise ValueError("TTS_DEFAULT_PROVIDER must be either 'qwen' or 'voxtral'")
+        provider_env = os.getenv("TTS_PROVIDER", self.tts_provider)
+        self.tts_provider = (provider_env or "mlx_audio").strip().lower()
+        if self.tts_provider != "mlx_audio":
+            raise ValueError("TTS_PROVIDER must be 'mlx_audio'")
 
         self.tts_model_default = os.getenv(
             "TTS_MODEL_DEFAULT",
@@ -74,24 +69,6 @@ class Settings:
             raise ValueError("TTS_MAX_INPUT_CHARS must be >= 256")
 
 
-        provider_prefixes_raw = os.getenv("TTS_PROVIDER_MODEL_PREFIXES", "").strip()
-        if provider_prefixes_raw:
-            try:
-                parsed_prefixes = json.loads(provider_prefixes_raw)
-            except json.JSONDecodeError as exc:
-                raise ValueError("TTS_PROVIDER_MODEL_PREFIXES must be valid JSON") from exc
-            if not isinstance(parsed_prefixes, dict):
-                raise ValueError("TTS_PROVIDER_MODEL_PREFIXES must be a JSON object")
-
-            normalized: dict[str, list[str]] = {}
-            for provider_name, prefixes in parsed_prefixes.items():
-                if not isinstance(provider_name, str) or not isinstance(prefixes, list):
-                    raise ValueError("TTS_PROVIDER_MODEL_PREFIXES entries must be provider -> list[str]")
-                normalized[provider_name.strip().lower()] = [
-                    str(prefix).strip().lower() for prefix in prefixes if str(prefix).strip()
-                ]
-            self.tts_provider_model_prefixes = normalized
-
         voice_map_file = os.getenv("TTS_VOICE_MAP_FILE", os.getenv("QWEN_TTS_VOICE_MAP_FILE", "")).strip()
         if not voice_map_file or voice_map_file == "":
             raise ValueError("TTS_VOICE_MAP_FILE env must be defined")
@@ -117,8 +94,8 @@ class Settings:
             ref_text = cfg.get("ref_text", "")
             language = cfg.get("language")
 
-            if not isinstance(ref_audio_path, str) or not ref_audio_path.strip():
-                raise ValueError(f"Voice '{voice}' requires non-empty 'ref_audio_path'")
+            if not isinstance(ref_audio_path, str):
+                raise ValueError(f"Voice '{voice}' requires string 'ref_audio_path'")
             if not isinstance(language, str) or not language.strip():
                 raise ValueError(f"Voice '{voice}' requires non-empty 'language'")
             if not isinstance(ref_text, str):

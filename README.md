@@ -6,7 +6,7 @@ OpenAI-compatible local audio API built with FastAPI and pluggable TTS providers
 
 - OpenAI-style endpoint surface under `/v1`.
 - Text-to-speech generation via `POST /v1/audio/speech`.
-- Provider strategy routing (`qwen`, `voxtral`) with dynamic model/provider resolution.
+- Provider strategy routing via a single `mlx_audio` provider.
 - Voice cloning through reference voice map metadata.
 - Fail-fast startup preload of default TTS model.
 - Automatic semantic chunking for long text input.
@@ -85,10 +85,9 @@ llm-tts-api
 
 ### TTS routing
 
-- `TTS_DEFAULT_PROVIDER` (default: `qwen`)
+- `TTS_PROVIDER` (default: `mlx_audio`)
 - `TTS_MODEL_DEFAULT` (default: `Qwen/Qwen3-TTS-12Hz-0.6B-Base`)
 - `TTS_MODEL_ALLOWED` (csv)
-- `TTS_PROVIDER_MODEL_PREFIXES` (JSON)
 
 ### Limits
 
@@ -112,10 +111,9 @@ APP_NAME=llm-tts-api
 APP_ENV=development
 APP_LOG_LEVEL=DEBUG
 
-TTS_DEFAULT_PROVIDER=voxtral
+TTS_PROVIDER=mlx_audio
 TTS_MODEL_DEFAULT=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit
 TTS_MODEL_ALLOWED=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit,Qwen/Qwen3-TTS-12Hz-0.6B-Base
-TTS_PROVIDER_MODEL_PREFIXES={"voxtral":["voxtral/","mistral/","mistralai/","mlx-community/"],"qwen":["qwen/"]}
 
 TTS_MAX_INPUT_CHARS=4096
 TTS_VOICE_MAP_FILE=./config/voice_map.local.json
@@ -129,13 +127,10 @@ STT_MODEL_ALLOWED=whisper-1
 For `POST /v1/audio/speech`:
 
 1. Resolve `model` from request or `TTS_MODEL_DEFAULT`.
-2. Resolve `provider`:
-   - explicit request provider wins,
-   - else infer by model prefix,
-   - else fallback to `TTS_DEFAULT_PROVIDER`.
+2. Resolve `provider` from request or fallback `TTS_PROVIDER`.
 3. Validate model against `TTS_MODEL_ALLOWED`.
 4. Resolve voice from `TTS_VOICE_MAP_FILE`.
-5. Chunk text (`TTS_MAX_INPUT_CHARS`) and dispatch provider synthesis.
+5. Chunk text (`TTS_MAX_INPUT_CHARS`) and dispatch `mlx_audio` synthesis.
 
 ## Speech Request Notes
 
@@ -185,7 +180,7 @@ sequenceDiagram
     participant TTS as TTSService
     participant MR as ModelRegistry
     participant PR as ProviderRegistry
-    participant Prov as Provider (qwen/voxtral)
+    participant Prov as Provider (mlx_audio)
     participant Voice as Voice Map Config
     participant FS as Temp File Storage
 
@@ -231,11 +226,11 @@ curl -X POST "http://localhost:8000/v1/audio/speech" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-    "provider": "qwen",
+    "provider": "mlx_audio",
     "voice": "gold",
     "input": "Ciao, questo e un test.",
     "response_format": "wav"
-  }' --output speech_qwen.wav
+  }' --output speech_mlx_audio_qwen.wav
 ```
 
 ```bash
@@ -243,11 +238,11 @@ curl -X POST "http://localhost:8000/v1/audio/speech?stream=true" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit",
-    "provider": "voxtral",
+    "provider": "mlx_audio",
     "voice": "gold",
     "input": "Hello, this is a Voxtral streaming synthesis test.",
     "response_format": "wav"
-  }' --output speech_voxtral_stream.wav
+  }' --output speech_mlx_audio_voxtral_stream.wav
 ```
 
 ## Operational Notes
