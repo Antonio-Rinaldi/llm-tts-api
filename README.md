@@ -1,32 +1,37 @@
 # llm-tts-api
 
-OpenAI-compatible local audio API built with FastAPI and pluggable TTS providers.
+OpenAI-compatible local audio API built with FastAPI and pluggable TTS providers, currently focused on local MLX-backed generation flows.
 
-Supported today:
-- `qwen` provider (local `qwen-tts` backend)
-- `voxtral` provider (local `mlx-audio` backend)
+## Core Features
 
----
+- OpenAI-style endpoint surface under `/v1`.
+- Text-to-speech generation via `POST /v1/audio/speech`.
+- Provider strategy routing (`qwen`, `voxtral`) with dynamic model/provider resolution.
+- Voice cloning through reference voice map metadata.
+- Fail-fast startup preload of default TTS model.
+- Automatic semantic chunking for long text input.
+- Stream and non-stream response modes.
+- Strict validation for model allow-lists and voice configuration.
 
-## What this service provides
+## Why The Main Choices Were Made
 
-- OpenAI-style routes under `/v1`
-- Voice-cloning speech generation via `POST /v1/audio/speech`
-- Model/provider resolution through config + request fields
-- Environment-driven setup (`.env` and `.env.local`)
-- Compatibility stubs (`501`) for not-yet-implemented routes
+- **OpenAI-compatible contract**: lets clients switch backends without rewriting business logic.
+- **Provider registry pattern**: isolates provider-specific code and keeps API layer stable.
+- **Startup preload fail-fast**: catches missing dependencies/model loading issues before traffic.
+- **Voice map file**: avoids hardcoding voice references in code and supports environment-specific deployment paths.
+- **Chunked synthesis**: reduces per-request risk and keeps long narration payloads reliable.
 
----
-
-## Endpoint status
+## Endpoint Status
 
 ### Implemented
+
 - `GET /health`
 - `GET /ready`
 - `GET /v1/models`
 - `POST /v1/audio/speech`
 
 ### Compatibility stubs (`501 not_implemented`)
+
 - `POST /v1/audio/transcriptions`
 - `POST /v1/audio/translations`
 - `POST /v1/audio/voices`
@@ -35,17 +40,15 @@ Supported today:
 - Chat routes under `/v1/chat/completions...`
 - Realtime routes under `/v1/realtime...`
 
----
+## Project Structure
 
-## Project layout
-
-- `src/llm_tts_api/` application package
-- `config/` configuration examples (including voice map)
-- `voices/` local reference voice audio files
-- `examples.http` ready-to-run request examples
-- `tests/` unit/integration tests
-
----
+- `src/llm_tts_api/`: application package.
+- `src/llm_tts_api/routers/`: API route handlers.
+- `src/llm_tts_api/services/`: model registry, TTS service, provider strategies.
+- `src/llm_tts_api/services/tts_providers/`: provider implementations.
+- `config/`: environment and voice map examples.
+- `voices/`: local reference voice audio samples.
+- `tests/`: unit/integration tests.
 
 ## Install
 
@@ -56,211 +59,105 @@ pip install -U pip
 pip install -e ".[dev]"
 ```
 
----
+## Run Modes
 
-## All ways to launch the API
-
-The app loads `.env` and `.env.local` automatically at startup.
-
-### 1) Launch with uvicorn directly
+The app auto-loads `.env` and `.env.local` during startup.
 
 ```bash
-uvicorn llm_tts_api.main:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 6000 --workers 4
+uvicorn llm_tts_api.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
-
-### 2) Launch module entrypoint (debug-friendly)
 
 ```bash
 python -m llm_tts_api.main
 ```
 
-### 3) Launch console script from `pyproject.toml`
-
 ```bash
 llm-tts-api
 ```
 
-### 4) Multi-worker launch (example)
+## Configuration Reference
 
-```bash
-uvicorn llm_tts_api.main:app --host 0.0.0.0 --port 8000 --workers 4
-```
-
----
-
-## Health checks
-
-```bash
-curl -s http://localhost:8000/health
-curl -s http://localhost:8000/ready
-```
-
----
-
-## Configuration: complete reference
-
-Use `.env.local` for real values (recommended).
-
-### Core app settings
+### App
 
 - `APP_NAME` (default: `llm-tts-api`)
 - `APP_ENV` (default: `development`)
 - `APP_LOG_LEVEL` (default: `INFO`)
 
-### TTS model/provider settings
+### TTS routing
 
 - `TTS_DEFAULT_PROVIDER` (default: `qwen`)
-  - Fallback provider when provider cannot be inferred and request omits `provider`
 - `TTS_MODEL_DEFAULT` (default: `Qwen/Qwen3-TTS-12Hz-0.6B-Base`)
-  - Used when request omits `model`
 - `TTS_MODEL_ALLOWED` (csv)
-  - Allow-list for `/v1/audio/speech` model validation
-- `TTS_PROVIDER_MODEL_PREFIXES` (JSON object)
-  - Provider inference map: `provider -> [model_prefixes]`
-  - Example:
-    ```bash
-    TTS_PROVIDER_MODEL_PREFIXES={"voxtral":["mistralai/"],"qwen":["qwen/"]}
-    ```
+- `TTS_PROVIDER_MODEL_PREFIXES` (JSON)
 
-### STT model settings (for stub compatibility)
-
-- `STT_MODEL_DEFAULT` (default: `whisper-1`)
-- `STT_MODEL_ALLOWED` (default: `whisper-1`)
-
-### Speech generation limits
+### Limits
 
 - `TTS_MAX_INPUT_CHARS` (default: `4096`, must be `>= 256`)
-  - Input text is semantically chunked when too long
+- `TTS_MAX_CONCURRENT_REQUESTS` (default: `1`)
+  - In-process synthesis concurrency limit; keep `1` for MLX/Metal stability
 
 ### Voice map
 
 - `TTS_VOICE_MAP_FILE` (required)
-  - Path to JSON file mapping voice name to voice metadata
 
----
+### STT placeholders
 
-## Recommended `.env.local` (full example)
+- `STT_MODEL_DEFAULT`
+- `STT_MODEL_ALLOWED`
+
+## Example `.env.local`
 
 ```bash
 APP_NAME=llm-tts-api
 APP_ENV=development
-APP_LOG_LEVEL=INFO
+APP_LOG_LEVEL=DEBUG
 
-TTS_DEFAULT_PROVIDER=qwen
-TTS_MODEL_DEFAULT=Qwen/Qwen3-TTS-12Hz-0.6B-Base
-TTS_MODEL_ALLOWED=Qwen/Qwen3-TTS-12Hz-0.6B-Base,mistralai/Voxtral-Mini-3B-2507
-TTS_PROVIDER_MODEL_PREFIXES={"voxtral":["voxtral/","mistral/","mistralai/"],"qwen":["qwen/"]}
-
-STT_MODEL_DEFAULT=whisper-1
-STT_MODEL_ALLOWED=whisper-1
+TTS_DEFAULT_PROVIDER=voxtral
+TTS_MODEL_DEFAULT=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit
+TTS_MODEL_ALLOWED=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit,Qwen/Qwen3-TTS-12Hz-0.6B-Base
+TTS_PROVIDER_MODEL_PREFIXES={"voxtral":["voxtral/","mistral/","mistralai/","mlx-community/"],"qwen":["qwen/"]}
 
 TTS_MAX_INPUT_CHARS=4096
 TTS_VOICE_MAP_FILE=./config/voice_map.local.json
+
+STT_MODEL_DEFAULT=whisper-1
+STT_MODEL_ALLOWED=whisper-1
 ```
 
----
+## Model and Provider Resolution Logic
 
-## Model/provider selection behavior
+For `POST /v1/audio/speech`:
 
-`POST /v1/audio/speech` resolves model/provider in this order:
+1. Resolve `model` from request or `TTS_MODEL_DEFAULT`.
+2. Resolve `provider`:
+   - explicit request provider wins,
+   - else infer by model prefix,
+   - else fallback to `TTS_DEFAULT_PROVIDER`.
+3. Validate model against `TTS_MODEL_ALLOWED`.
+4. Resolve voice from `TTS_VOICE_MAP_FILE`.
+5. Chunk text (`TTS_MAX_INPUT_CHARS`) and dispatch provider synthesis.
 
-1. `model`: request `model` or fallback `TTS_MODEL_DEFAULT`
-2. `provider`:
-   - if request `provider` is provided, use it
-   - else if request `model` is provided, infer from `TTS_PROVIDER_MODEL_PREFIXES`
-   - else fallback `TTS_DEFAULT_PROVIDER`
-3. Validate `model` is in `TTS_MODEL_ALLOWED`
-4. Dispatch to the provider strategy implementation
+## Speech Request Notes
 
-This means you can select any supported model id dynamically per request, without hardcoding model names in code.
+### Body fields
 
----
-
-## Speech request parameters (`POST /v1/audio/speech`)
-
-Body fields:
-
-- `model` (string, required by schema; can be defaulted by server logic if omitted upstream)
-- `provider` (optional, `qwen`/`voxtral` or any provider registered in strategy registry)
-- `input` (string, required)
-- `voice` (string, must exist in `TTS_VOICE_MAP_FILE`)
-- `response_format` (currently only `wav` is supported)
-- `instructions` (accepted by schema)
+- `model`
+- `provider` (optional)
+- `input`
+- `voice`
+- `response_format` (`wav` only)
+- `instructions` (accepted and forwarded where supported)
 - `speed` (accepted by schema)
 - `stream_format` (accepted by schema)
 
-Query params:
+### Query
 
-- `stream` (boolean, default `false`)
-  - `false`: file response with temp-file cleanup
-  - `true`: in-memory streaming response
+- `stream` (`true` or `false`)
 
----
+## Voice Map Schema
 
-## Request examples for all supported providers
+Each voice key requires:
 
-### Qwen model
-
-```bash
-curl -X POST "http://localhost:8000/v1/audio/speech" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-    "provider": "qwen",
-    "voice": "alloy",
-    "input": "Ciao, questo e un test.",
-    "response_format": "wav"
-  }' --output speech_qwen.wav
-```
-
-### Voxtral model (local MLX via mlx-audio)
-
-```bash
-curl -X POST "http://localhost:8000/v1/audio/speech" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mistralai/Voxtral-Mini-3B-2507",
-    "provider": "voxtral",
-    "voice": "nova",
-    "input": "Hello, this is a local Voxtral synthesis test.",
-    "response_format": "wav"
-  }' --output speech_voxtral.wav
-```
-
----
-
-## Professional voice onboarding workflow
-
-This section describes a repeatable process to create production-quality voices and add them safely.
-
-### 1) Record or select clean reference samples
-
-Guidelines:
-- mono WAV preferred
-- low background noise, no music bed
-- consistent mic distance and room
-- stable speaking style matching target use-case
-- clear language pronunciation for target `language`
-
-Recommended target quality:
-- `16 kHz` or `24 kHz` sample rate
-- at least `8-20` seconds of clean speech
-
-### 2) Prepare voice files in repository
-
-Store files under `voices/` with predictable names:
-
-```text
-voices/
-  alloy.wav
-  nova.wav
-  narrator_it_female.wav
-  narrator_en_male.wav
-```
-
-### 3) Build `config/voice_map.local.json`
-
-Each voice entry requires:
 - `ref_audio_path`
 - `ref_text`
 - `language`
@@ -269,55 +166,95 @@ Example:
 
 ```json
 {
-  "alloy": {
-    "ref_audio_path": "/absolute/path/to/voices/alloy.wav",
-    "ref_text": "Ciao, questa e una voce di riferimento chiara e naturale.",
+  "gold": {
+    "ref_audio_path": "/absolute/path/to/voices/gold.wav",
+    "ref_text": "Ciao, questa e una voce di riferimento per il clonaggio.",
     "language": "Italian"
-  },
-  "narrator_en_male": {
-    "ref_audio_path": "/absolute/path/to/voices/narrator_en_male.wav",
-    "ref_text": "Hello, this is a clean English reference sample for narration.",
-    "language": "English"
   }
 }
 ```
 
-### 4) Point env to the voice map
+## Detailed Sequence Diagram (`/v1/audio/speech`)
 
-```bash
-TTS_VOICE_MAP_FILE=./config/voice_map.local.json
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant API as FastAPI Router
+    participant Dep as Dependencies
+    participant TTS as TTSService
+    participant MR as ModelRegistry
+    participant PR as ProviderRegistry
+    participant Prov as Provider (qwen/voxtral)
+    participant Voice as Voice Map Config
+    participant FS as Temp File Storage
+
+    Client->>API: POST /v1/audio/speech?stream={bool}
+    API->>Dep: get_tts_service()
+    Dep-->>API: cached TTSService
+    API->>TTS: create_speech(request, stream)
+
+    TTS->>MR: resolve_tts_target(model, provider)
+    MR-->>TTS: resolved model + provider
+    TTS->>MR: is_allowed_tts_model(model)
+    MR-->>TTS: true/false
+
+    TTS->>Voice: load voice from settings.tts_voice_map
+    Voice-->>TTS: ref_audio_path, ref_text, language
+
+    TTS->>TTS: split_text_semantic(input, TTS_MAX_INPUT_CHARS)
+    TTS->>PR: get(provider)
+    PR-->>TTS: provider strategy
+
+    loop each text chunk
+        TTS->>Prov: synthesize_chunks(SynthesisRequest)
+        Prov-->>TTS: wav chunk bytes[]
+    end
+
+    TTS->>TTS: concatenate wav chunks
+
+    alt stream=true
+        TTS-->>API: StreamingResponse(audio/wav)
+        API-->>Client: streamed WAV bytes
+    else stream=false
+        TTS->>FS: write temp .wav file
+        TTS-->>API: FileResponse + cleanup callback
+        API-->>Client: file download
+        API->>FS: remove temp file after response
+    end
 ```
 
-### 5) Validate each voice before production
+## Request Examples
 
-Checklist:
-- reference path exists and is readable
-- `ref_text` matches spoken content reasonably well
-- language tag is correct
-- short and long prompts both sound stable
-- no clipping/artifacts in output WAV
+```bash
+curl -X POST "http://localhost:8000/v1/audio/speech" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    "provider": "qwen",
+    "voice": "gold",
+    "input": "Ciao, questo e un test.",
+    "response_format": "wav"
+  }' --output speech_qwen.wav
+```
 
-### 6) Naming and governance best practices
+```bash
+curl -X POST "http://localhost:8000/v1/audio/speech?stream=true" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit",
+    "provider": "voxtral",
+    "voice": "gold",
+    "input": "Hello, this is a Voxtral streaming synthesis test.",
+    "response_format": "wav"
+  }' --output speech_voxtral_stream.wav
+```
 
-- Use stable snake_case voice keys (API contract)
-- Keep one source-of-truth JSON under `config/`
-- Version-control non-sensitive voice metadata
-- Prefer absolute paths in local development, mapped paths in deployment
-- Add smoke tests for newly introduced voice keys
+## Operational Notes
 
----
-
-## Extending with a new provider (strategy pattern)
-
-Provider architecture is strategy-based under `src/llm_tts_api/services/tts_providers/`.
-
-To add a provider professionally:
-
-1. Implement strategy with `provider_name` + `synthesize_chunks(...)`
-2. Register it in `get_tts_provider_registry()` in `src/llm_tts_api/dependencies.py`
-3. Add/update prefixes in `TTS_PROVIDER_MODEL_PREFIXES`
-4. Add tests for dispatch and failure paths
-5. Update README examples and `.env.example`
+- For MLX stability, prefer controlled concurrency and avoid unsafe shared model execution patterns.
+- Startup intentionally preloads the default model and fails fast if preload fails.
+- Use `APP_LOG_LEVEL=DEBUG` for HTTP and provider-level tracing.
 
 ---
 

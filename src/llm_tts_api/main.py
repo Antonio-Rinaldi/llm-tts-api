@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from llm_tts_api import dependencies
+from llm_tts_api.app_logging import setup_logging
 from llm_tts_api.errors import OpenAIHTTPException
 from llm_tts_api.routers.audio import router as audio_router
 from llm_tts_api.routers.chat import router as chat_router
@@ -39,6 +40,8 @@ def _load_default_env_files() -> None:
 
 
 def create_app() -> FastAPI:
+    setup_logging(os.getenv("APP_LOG_LEVEL", "INFO"))
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         # Fail fast on startup if default model preload is broken.
@@ -60,7 +63,13 @@ def create_app() -> FastAPI:
 
 
 def run() -> None:
-    uvicorn.run("llm_tts_api.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run(
+        "llm_tts_api.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+        log_level=os.getenv("APP_LOG_LEVEL", "INFO").lower(),
+    )
 
 
 _load_default_env_files()

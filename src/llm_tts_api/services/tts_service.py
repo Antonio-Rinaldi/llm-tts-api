@@ -4,6 +4,7 @@ import io
 import os
 import re
 import tempfile
+import threading
 import wave
 from pathlib import Path
 
@@ -132,6 +133,12 @@ class TTSService:
         self.settings = settings
         self.model_registry = model_registry
         self.provider_registry = provider_registry
+        max_inflight_raw = os.getenv("TTS_MAX_CONCURRENT_REQUESTS", "1").strip()
+        try:
+            self._max_concurrent_requests = max(1, int(max_inflight_raw))
+        except ValueError as exc:
+            raise ValueError("TTS_MAX_CONCURRENT_REQUESTS must be an integer >= 1") from exc
+        self._synthesis_semaphore = threading.Semaphore(self._max_concurrent_requests)
         # Preload the default TTS model at startup for faster first request
         default_provider = self.model_registry.infer_tts_provider(self.settings.tts_model_default)
         preload_target = self.provider_registry.get(default_provider)
@@ -183,15 +190,17 @@ class TTSService:
             raise invalid_request("input is required", param="input")
 
         try:
-            provider_strategy = self.provider_registry.get(provider)
-            chunk_wavs = provider_strategy.synthesize_chunks(
-                SynthesisRequest(
-                    model_name=model_name,
-                    chunks=chunks,
-                    voice=voice,
-                    response_format=requested_format,
+            with self._synthesis_semaphore:
+                provider_strategy = self.provider_registry.get(provider)
+                chunk_wavs = provider_strategy.synthesize_chunks(
+                    SynthesisRequest(
+                        model_name=model_name,
+                        chunks=chunks,
+                        voice=voice,
+                        voice_name=request.voice,
+                        response_format=requested_format,
+                    )
                 )
-            )
 
             merged_wav = _concat_wav_bytes(chunk_wavs)
 

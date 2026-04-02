@@ -11,6 +11,7 @@ class SynthesisRequest:
     model_name: str
     chunks: list[str]
     voice: VoiceConfig
+    voice_name: str = ""
     response_format: str = "wav"
 
 
