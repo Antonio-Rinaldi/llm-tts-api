@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import io
 import inspect
-from threading import Lock
 from typing import Any
 
 import numpy as np
@@ -11,24 +10,12 @@ import soundfile as sf
 
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
+from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
 from llm_tts_api.services.tts_providers.voice_args import build_clone_voice_args, build_named_voice_args
 
 
-class VllmOmniTTSProvider:
+class VllmOmniTTSProvider(CachedModelProvider):
     provider_name = "vllm-omni"
-
-    def __init__(self) -> None:
-        self._model_cache: dict[str, object] = {}
-        self._model_locks: dict[str, Lock] = {}
-        self._cache_lock = Lock()
-
-    def _get_model_lock(self, model_name: str) -> Lock:
-        with self._cache_lock:
-            model_lock = self._model_locks.get(model_name)
-            if model_lock is None:
-                model_lock = Lock()
-                self._model_locks[model_name] = model_lock
-            return model_lock
 
     @staticmethod
     def _resolve_loader() -> Any:
@@ -55,12 +42,7 @@ class VllmOmniTTSProvider:
             param="provider",
         ) from last_exc
 
-    def _get_model(self, model_name: str):
-        with self._cache_lock:
-            cached = self._model_cache.get(model_name)
-        if cached is not None:
-            return cached
-
+    def _load_model(self, model_name: str):
         try:
             loader = self._resolve_loader()
             model = loader(model_name)
@@ -71,18 +53,8 @@ class VllmOmniTTSProvider:
                 f"Failed to load vllm-omni model '{model_name}': {exc}",
                 param="model",
             ) from exc
-
-        with self._cache_lock:
-            existing = self._model_cache.get(model_name)
-            if existing is not None:
-                return existing
-            self._model_cache[model_name] = model
-            if model_name not in self._model_locks:
-                self._model_locks[model_name] = Lock()
         return model
 
-    def preload(self, model_name: str) -> None:
-        self._get_model(model_name)
 
     @staticmethod
     def _signature_params(model: object) -> set[str]:

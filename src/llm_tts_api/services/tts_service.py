@@ -7,12 +7,13 @@ import re
 import tempfile
 import threading
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
-from llm_tts_api.config import Settings
+from llm_tts_api.config import Settings, VoiceConfig
 from llm_tts_api.errors import OpenAIHTTPException, internal_error, invalid_request
 from llm_tts_api.schemas.speech import SpeechRequest
 from llm_tts_api.services.model_registry import ModelRegistry
@@ -21,6 +22,16 @@ from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ResolvedSpeechRequest:
+    model_name: str
+    provider: str
+    voice_name: str
+    voice: VoiceConfig
+    response_format: str
+    chunks: list[str]
 
 
 def split_text_semantic(text: str, max_chars: int) -> list[str]:
@@ -155,12 +166,7 @@ class TTSService:
         except OSError:
             pass
 
-    def create_speech(self, request: SpeechRequest, stream: bool = False) -> FileResponse:
-        """
-        Generate speech audio for the given request.
-        If stream=True, return StreamingResponse (audio from memory, no disk IO).
-        Otherwise, return FileResponse (audio from temp file, auto cleanup).
-        """
+    def _resolve_speech_request(self, request: SpeechRequest) -> ResolvedSpeechRequest:
         if not request.input or not request.input.strip():
             raise invalid_request("input is required", param="input")
 
@@ -183,50 +189,70 @@ class TTSService:
                 code="voice_reference_missing",
             )
 
-        requested_format = (request.response_format or "wav").lower()
-        if requested_format != "wav":
+        response_format = (request.response_format or "wav").lower()
+        if response_format != "wav":
             raise invalid_request("Only 'wav' response_format is currently supported", param="response_format")
 
         chunks = split_text_semantic(request.input, self.settings.tts_max_input_chars)
         if not chunks:
             raise invalid_request("input is required", param="input")
 
-        try:
-            with self._synthesis_semaphore:
-                provider_strategy = self.provider_registry.get(provider)
-                chunk_wavs = provider_strategy.synthesize_chunks(
-                    SynthesisRequest(
-                        model_name=model_name,
-                        chunks=chunks,
-                        voice=voice,
-                        voice_name=request.voice,
-                        response_format=requested_format,
-                    )
+        return ResolvedSpeechRequest(
+            model_name=model_name,
+            provider=provider,
+            voice_name=request.voice,
+            voice=voice,
+            response_format=response_format,
+            chunks=chunks,
+        )
+
+    def _synthesize_wav(self, resolved: ResolvedSpeechRequest) -> bytes:
+        with self._synthesis_semaphore:
+            provider_strategy = self.provider_registry.get(resolved.provider)
+            chunk_wavs = provider_strategy.synthesize_chunks(
+                SynthesisRequest(
+                    model_name=resolved.model_name,
+                    chunks=resolved.chunks,
+                    voice=resolved.voice,
+                    voice_name=resolved.voice_name,
+                    response_format=resolved.response_format,
                 )
-
-            merged_wav = _concat_wav_bytes(chunk_wavs)
-
-            if stream:
-                return StreamingResponse(io.BytesIO(merged_wav), media_type="audio/wav")
-
-            fd, out_path = tempfile.mkstemp(suffix=".wav")
-            os.close(fd)
-            Path(out_path).write_bytes(merged_wav)
-
-            return FileResponse(
-                out_path,
-                media_type="audio/wav",
-                filename="speech.wav",
-                background=BackgroundTask(self._cleanup_file, out_path),
             )
+        return _concat_wav_bytes(chunk_wavs)
+
+    def _build_speech_response(self, wav_bytes: bytes, stream: bool) -> FileResponse | StreamingResponse:
+        if stream:
+            return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav")
+
+        fd, out_path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        Path(out_path).write_bytes(wav_bytes)
+        return FileResponse(
+            out_path,
+            media_type="audio/wav",
+            filename="speech.wav",
+            background=BackgroundTask(self._cleanup_file, out_path),
+        )
+
+    def create_speech(self, request: SpeechRequest, stream: bool = False) -> FileResponse | StreamingResponse:
+        """
+        Generate speech audio for the given request.
+        If stream=True, return StreamingResponse (audio from memory, no disk IO).
+        Otherwise, return FileResponse (audio from temp file, auto cleanup).
+        """
+        resolved = self._resolve_speech_request(request)
+
+        try:
+            merged_wav = self._synthesize_wav(resolved)
+            return self._build_speech_response(merged_wav, stream)
         except OpenAIHTTPException:
             raise
         except Exception as exc:  # pragma: no cover
             logger.exception(
                 "Speech generation failed | model=%s provider=%s voice=%s stream=%s error=%s",
-                model_name,
-                provider,
-                request.voice,
+                resolved.model_name,
+                resolved.provider,
+                resolved.voice_name,
                 stream,
                 exc,
             )

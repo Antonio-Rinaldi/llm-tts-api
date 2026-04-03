@@ -1,37 +1,19 @@
 from __future__ import annotations
 
 import io
-from threading import Lock
 
 import numpy as np
 import soundfile as sf
 
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
+from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
 
 
-class VoxtralTTSProvider:
+class VoxtralTTSProvider(CachedModelProvider):
     provider_name = "voxtral"
 
-    def __init__(self) -> None:
-        self._model_cache: dict[str, object] = {}
-        self._model_locks: dict[str, Lock] = {}
-        self._cache_lock = Lock()
-
-    def _get_model_lock(self, model_name: str) -> Lock:
-        with self._cache_lock:
-            model_lock = self._model_locks.get(model_name)
-            if model_lock is None:
-                model_lock = Lock()
-                self._model_locks[model_name] = model_lock
-            return model_lock
-
-    def _get_model(self, model_name: str):
-        with self._cache_lock:
-            cached = self._model_cache.get(model_name)
-        if cached is not None:
-            return cached
-
+    def _load_model(self, model_name: str):
         try:
             import mlx_audio.tts.utils as mlx_audio_model
         except Exception as exc:  # noqa: BLE001
@@ -47,18 +29,8 @@ class VoxtralTTSProvider:
                 f"Failed to load voxtral model '{model_name}': {exc}",
                 param="model",
             ) from exc
-
-        with self._cache_lock:
-            existing = self._model_cache.get(model_name)
-            if existing is not None:
-                return existing
-            self._model_cache[model_name] = model
-            if model_name not in self._model_locks:
-                self._model_locks[model_name] = Lock()
         return model
 
-    def preload(self, model_name: str) -> None:
-        self._get_model(model_name)
 
     @staticmethod
     def _build_generate_kwargs(request: SynthesisRequest, chunk: str) -> dict[str, str]:
