@@ -37,8 +37,8 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 def test_settings_allowed_models_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from llm_tts_api.config import Settings
 
-    monkeypatch.setenv("TTS_MODEL_DEFAULT", "m1")
-    monkeypatch.setenv("TTS_MODEL_ALLOWED", "m1,m2,m3")
+    monkeypatch.setenv("TTS_MLX_AUDIO_MODEL_DEFAULT", "m1")
+    monkeypatch.setenv("TTS_MLX_AUDIO_MODEL_ALLOWED", "m1,m2,m3")
     monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
 
     settings = Settings()
@@ -101,3 +101,44 @@ def test_settings_provider_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     settings = Settings()
 
     assert settings.tts_provider == "mlx_audio"
+
+
+def test_settings_voxtral_provider_specific_model_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from llm_tts_api.config import Settings
+
+    monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
+    monkeypatch.setenv("TTS_PROVIDER", "voxtral")
+    monkeypatch.setenv("TTS_VOXTRAL_MODEL_DEFAULT", "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit")
+    monkeypatch.setenv(
+        "TTS_VOXTRAL_MODEL_ALLOWED",
+        "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit,mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit",
+    )
+
+    settings = Settings()
+
+    assert settings.tts_provider == "voxtral"
+    assert settings.tts_model_default == "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit"
+    assert settings.tts_model_allowed == [
+        "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit",
+        "mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit",
+    ]
+
+
+def test_settings_vllm_omni_provider_specific_model_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from llm_tts_api.config import Settings
+
+    monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
+    monkeypatch.setenv("TTS_PROVIDER", "vllm-omni")
+    monkeypatch.setenv("TTS_VLLM_OMNI_MODEL_DEFAULT", "vllm-omni/default-tts")
+    monkeypatch.setenv(
+        "TTS_VLLM_OMNI_MODEL_ALLOWED",
+        "vllm-omni/default-tts,vllm-omni/voice-clone-tts",
+    )
+
+    settings = Settings()
+
+    assert settings.tts_provider == "vllm-omni"
+    assert settings.tts_model_default == "vllm-omni/default-tts"
+    assert settings.tts_model_allowed == ["vllm-omni/default-tts", "vllm-omni/voice-clone-tts"]
+
+

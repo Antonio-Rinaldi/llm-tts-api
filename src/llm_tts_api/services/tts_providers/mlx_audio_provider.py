@@ -9,6 +9,7 @@ import soundfile as sf
 
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
+from llm_tts_api.services.tts_providers.voice_args import build_clone_voice_args, build_named_voice_args
 
 
 class MLXAudioTTSProvider:
@@ -70,37 +71,26 @@ class MLXAudioTTSProvider:
 
     @staticmethod
     def _build_voice_kwargs(request: SynthesisRequest, params: set[str]) -> tuple[dict[str, str], bool]:
-        kwargs: dict[str, str] = {}
-        used_voice_name = False
+        selected_clone_args = build_clone_voice_args(
+            ref_audio_path=request.voice.ref_audio_path,
+            ref_text=request.voice.ref_text,
+            available_params=params,
+        )
+        if selected_clone_args:
+            return selected_clone_args, False
 
-        if request.voice_name:
-            if "voice" in params:
-                kwargs["voice"] = request.voice_name
-                used_voice_name = True
-            elif "voice_id" in params:
-                kwargs["voice_id"] = request.voice_name
-                used_voice_name = True
-            elif "speaker" in params:
-                kwargs["speaker"] = request.voice_name
-                used_voice_name = True
+        selected_named_voice_args = build_named_voice_args(
+            voice_name=request.voice_name,
+            available_params=params,
+        )
+        if selected_named_voice_args:
+            return selected_named_voice_args, True
 
-        if not used_voice_name and request.voice.ref_audio_path:
-            if "ref_audio" in params:
-                kwargs["ref_audio"] = request.voice.ref_audio_path
-            elif "reference_audio" in params:
-                kwargs["reference_audio"] = request.voice.ref_audio_path
-            if "ref_text" in params:
-                kwargs["ref_text"] = request.voice.ref_text
-            elif "reference_text" in params:
-                kwargs["reference_text"] = request.voice.ref_text
+        raise invalid_request(
+            "No usable voice provided: configure ref_audio_path/ref_text or set request voice_name",
+            param="voice",
+        )
 
-        if not used_voice_name and not request.voice.ref_audio_path:
-            raise invalid_request(
-                "No usable voice provided: set request voice_name or configure ref_audio_path/ref_text",
-                param="voice",
-            )
-
-        return kwargs, used_voice_name
 
     def synthesize_chunks(self, request: SynthesisRequest) -> list[bytes]:
         model = self._get_model(request.model_name)
@@ -118,15 +108,14 @@ class MLXAudioTTSProvider:
                 except AssertionError as exc:
                     # If direct voice selection fails, fallback to cloning refs when available.
                     if used_voice_name and request.voice.ref_audio_path:
-                        fallback_kwargs = {"text": chunk}
-                        if "ref_audio" in params:
-                            fallback_kwargs["ref_audio"] = request.voice.ref_audio_path
-                        elif "reference_audio" in params:
-                            fallback_kwargs["reference_audio"] = request.voice.ref_audio_path
-                        if "ref_text" in params:
-                            fallback_kwargs["ref_text"] = request.voice.ref_text
-                        elif "reference_text" in params:
-                            fallback_kwargs["reference_text"] = request.voice.ref_text
+                        fallback_kwargs = {
+                            "text": chunk,
+                            **build_clone_voice_args(
+                                ref_audio_path=request.voice.ref_audio_path,
+                                ref_text=request.voice.ref_text,
+                                available_params=params,
+                            ),
+                        }
                         results = model.generate(**fallback_kwargs)
                     else:
                         raise invalid_request(str(exc), param="voice") from exc

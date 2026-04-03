@@ -146,7 +146,7 @@ class TTSService:
         preload_target = self.provider_registry.get(default_provider)
         preload_model = getattr(preload_target, "preload", None)
         if callable(preload_model):
-            preload_model(self.settings.tts_model_default)
+            preload_model(self.settings.tts_model_default_for_provider(default_provider))
 
     @staticmethod
     def _cleanup_file(path: str) -> None:
@@ -169,7 +169,7 @@ class TTSService:
         except ValueError as exc:
             raise invalid_request(str(exc), param="provider") from exc
 
-        if not self.model_registry.is_allowed_tts_model(model_name):
+        if not self.model_registry.is_allowed_tts_model(model_name, provider):
             raise invalid_request(f"model '{model_name}' is not allowed", param="model")
 
         voice = self.settings.tts_voice_map.get(request.voice)

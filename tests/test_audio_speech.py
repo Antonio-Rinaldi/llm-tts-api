@@ -1,4 +1,5 @@
 import json
+import wave
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -87,7 +88,14 @@ def test_speech_rejects_disallowed_model(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_speech_mlx_audio_requires_dependency(monkeypatch, tmp_path: Path) -> None:
-    client = _build_client_with_voice(monkeypatch, tmp_path, {"TTS_MODEL_ALLOWED": "voxtral/mini-tts"})
+    client = _build_client_with_voice(
+        monkeypatch,
+        tmp_path,
+        {
+            "TTS_PROVIDER": "mlx_audio",
+            "TTS_MLX_AUDIO_MODEL_ALLOWED": "voxtral/mini-tts",
+        },
+    )
 
     from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSProvider
 
@@ -109,4 +117,43 @@ def test_speech_mlx_audio_requires_dependency(monkeypatch, tmp_path: Path) -> No
     assert response.status_code == 400
     payload = response.json()
     assert payload["error"]["param"] == "provider"
+
+
+def test_speech_forwards_clone_voice_config_to_mlx_provider(monkeypatch, tmp_path: Path) -> None:
+    client = _build_client_with_voice(monkeypatch, tmp_path)
+
+    from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSProvider
+
+    captured = {}
+
+    def _wav_bytes() -> bytes:
+        import io
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(2)
+            writer.setframerate(16000)
+            writer.writeframes(b"\x00\x00" * 10)
+        return buf.getvalue()
+
+    def _fake_synthesize(self, request):
+        _ = self
+        captured["voice_name"] = request.voice_name
+        captured["ref_audio_path"] = request.voice.ref_audio_path
+        captured["ref_text"] = request.voice.ref_text
+        return [_wav_bytes()]
+
+    monkeypatch.setattr(MLXAudioTTSProvider, "synthesize_chunks", _fake_synthesize)
+
+    response = client.post(
+        "/v1/audio/speech",
+        json={"model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base", "provider": "mlx_audio", "voice": "alloy", "input": "hello"},
+    )
+
+    assert response.status_code == 200
+    assert captured["voice_name"] == "alloy"
+    assert captured["ref_audio_path"].endswith("alloy.wav")
+    assert captured["ref_text"] == "sample"
+
 

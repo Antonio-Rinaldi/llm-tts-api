@@ -22,6 +22,12 @@ class Settings:
     tts_model_default: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
     tts_model_allowed: list[str] = field(default_factory=list)
     tts_provider: str = "mlx_audio"
+    tts_mlx_audio_model_default: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+    tts_mlx_audio_model_allowed: list[str] = field(default_factory=list)
+    tts_voxtral_model_default: str = "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit"
+    tts_voxtral_model_allowed: list[str] = field(default_factory=list)
+    tts_vllm_omni_model_default: str = "vllm-omni/default-tts"
+    tts_vllm_omni_model_allowed: list[str] = field(default_factory=list)
 
     stt_model_default: str = "whisper-1"
     stt_model_allowed: list[str] = field(default_factory=list)
@@ -36,31 +42,58 @@ class Settings:
 
         provider_env = os.getenv("TTS_PROVIDER", self.tts_provider)
         self.tts_provider = (provider_env or "mlx_audio").strip().lower()
-        if self.tts_provider != "mlx_audio":
-            raise ValueError("TTS_PROVIDER must be 'mlx_audio'")
+        if self.tts_provider not in {"mlx_audio", "voxtral", "vllm-omni"}:
+            raise ValueError("TTS_PROVIDER must be one of 'mlx_audio', 'voxtral', or 'vllm-omni'")
 
-        self.tts_model_default = os.getenv(
-            "TTS_MODEL_DEFAULT",
-            os.getenv("QWEN_TTS_MODEL_DEFAULT", self.tts_model_default),
-        )
-
-        tts_allowed = os.getenv("TTS_MODEL_ALLOWED", os.getenv("QWEN_TTS_MODEL_ALLOWED", "")).strip()
-        if tts_allowed:
-            self.tts_model_allowed = [item.strip() for item in tts_allowed.split(",") if item.strip()]
+        self.tts_mlx_audio_model_default = os.getenv(
+            "TTS_MLX_AUDIO_MODEL_DEFAULT",
+            self.tts_mlx_audio_model_default,
+        ).strip()
+        mlx_allowed_raw = os.getenv("TTS_MLX_AUDIO_MODEL_ALLOWED", "").strip()
+        if mlx_allowed_raw:
+            self.tts_mlx_audio_model_allowed = [item.strip() for item in mlx_allowed_raw.split(",") if item.strip()]
         else:
-            self.tts_model_allowed = [self.tts_model_default]
+            self.tts_mlx_audio_model_allowed = [self.tts_mlx_audio_model_default]
+        if self.tts_mlx_audio_model_default not in self.tts_mlx_audio_model_allowed:
+            self.tts_mlx_audio_model_allowed.insert(0, self.tts_mlx_audio_model_default)
 
-        if self.tts_model_default not in self.tts_model_allowed:
-            self.tts_model_allowed.insert(0, self.tts_model_default)
+        self.tts_voxtral_model_default = os.getenv(
+            "TTS_VOXTRAL_MODEL_DEFAULT",
+            self.tts_voxtral_model_default,
+        ).strip()
+        voxtral_allowed_raw = os.getenv("TTS_VOXTRAL_MODEL_ALLOWED", "").strip()
+        if voxtral_allowed_raw:
+            self.tts_voxtral_model_allowed = [item.strip() for item in voxtral_allowed_raw.split(",") if item.strip()]
+        else:
+            self.tts_voxtral_model_allowed = [self.tts_voxtral_model_default]
+        if self.tts_voxtral_model_default not in self.tts_voxtral_model_allowed:
+            self.tts_voxtral_model_allowed.insert(0, self.tts_voxtral_model_default)
 
-        self.stt_model_default = os.getenv("STT_MODEL_DEFAULT", os.getenv("QWEN_STT_MODEL_DEFAULT", self.stt_model_default))
-        stt_allowed = os.getenv("STT_MODEL_ALLOWED", os.getenv("QWEN_STT_MODEL_ALLOWED", "")).strip()
+        self.tts_vllm_omni_model_default = os.getenv(
+            "TTS_VLLM_OMNI_MODEL_DEFAULT",
+            self.tts_vllm_omni_model_default,
+        ).strip()
+        vllm_omni_allowed_raw = os.getenv("TTS_VLLM_OMNI_MODEL_ALLOWED", "").strip()
+        if vllm_omni_allowed_raw:
+            self.tts_vllm_omni_model_allowed = [
+                item.strip() for item in vllm_omni_allowed_raw.split(",") if item.strip()
+            ]
+        else:
+            self.tts_vllm_omni_model_allowed = [self.tts_vllm_omni_model_default]
+        if self.tts_vllm_omni_model_default not in self.tts_vllm_omni_model_allowed:
+            self.tts_vllm_omni_model_allowed.insert(0, self.tts_vllm_omni_model_default)
+
+        self.tts_model_default = self.tts_model_default_for_provider(self.tts_provider)
+        self.tts_model_allowed = self.tts_model_allowed_for_provider(self.tts_provider)
+
+        self.stt_model_default = os.getenv("STT_MODEL_DEFAULT", self.stt_model_default)
+        stt_allowed = os.getenv("STT_MODEL_ALLOWED", "").strip()
         if stt_allowed:
             self.stt_model_allowed = [item.strip() for item in stt_allowed.split(",") if item.strip()]
         else:
             self.stt_model_allowed = [self.stt_model_default]
 
-        max_chars_raw = os.getenv("TTS_MAX_INPUT_CHARS", os.getenv("QWEN_TTS_MAX_INPUT_CHARS", str(self.tts_max_input_chars))).strip()
+        max_chars_raw = os.getenv("TTS_MAX_INPUT_CHARS", str(self.tts_max_input_chars)).strip()
         try:
             self.tts_max_input_chars = int(max_chars_raw)
         except ValueError as exc:
@@ -69,7 +102,7 @@ class Settings:
             raise ValueError("TTS_MAX_INPUT_CHARS must be >= 256")
 
 
-        voice_map_file = os.getenv("TTS_VOICE_MAP_FILE", os.getenv("QWEN_TTS_VOICE_MAP_FILE", "")).strip()
+        voice_map_file = os.getenv("TTS_VOICE_MAP_FILE", "").strip()
         if not voice_map_file or voice_map_file == "":
             raise ValueError("TTS_VOICE_MAP_FILE env must be defined")
 
@@ -109,27 +142,17 @@ class Settings:
 
         self.tts_voice_map = parsed_map
 
-    # Backward-compatible aliases for existing internal callers/tests.
-    @property
-    def qwen_tts_model_default(self) -> str:
-        return self.tts_model_default
+    def tts_model_default_for_provider(self, provider: str) -> str:
+        if provider == "vllm-omni":
+            return self.tts_vllm_omni_model_default
+        if provider == "voxtral":
+            return self.tts_voxtral_model_default
+        return self.tts_mlx_audio_model_default
 
-    @property
-    def qwen_tts_model_allowed(self) -> list[str]:
-        return self.tts_model_allowed
+    def tts_model_allowed_for_provider(self, provider: str) -> list[str]:
+        if provider == "vllm-omni":
+            return list(self.tts_vllm_omni_model_allowed)
+        if provider == "voxtral":
+            return list(self.tts_voxtral_model_allowed)
+        return list(self.tts_mlx_audio_model_allowed)
 
-    @property
-    def qwen_stt_model_default(self) -> str:
-        return self.stt_model_default
-
-    @property
-    def qwen_stt_model_allowed(self) -> list[str]:
-        return self.stt_model_allowed
-
-    @property
-    def qwen_tts_voice_map(self) -> dict[str, VoiceConfig]:
-        return self.tts_voice_map
-
-    @property
-    def qwen_tts_max_input_chars(self) -> int:
-        return self.tts_max_input_chars

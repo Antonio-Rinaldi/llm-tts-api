@@ -86,8 +86,12 @@ llm-tts-api
 ### TTS routing
 
 - `TTS_PROVIDER` (default: `mlx_audio`)
-- `TTS_MODEL_DEFAULT` (default: `Qwen/Qwen3-TTS-12Hz-0.6B-Base`)
-- `TTS_MODEL_ALLOWED` (csv)
+- `TTS_MLX_AUDIO_MODEL_DEFAULT`
+- `TTS_MLX_AUDIO_MODEL_ALLOWED` (csv)
+- `TTS_VOXTRAL_MODEL_DEFAULT`
+- `TTS_VOXTRAL_MODEL_ALLOWED` (csv)
+- `TTS_VLLM_OMNI_MODEL_DEFAULT`
+- `TTS_VLLM_OMNI_MODEL_ALLOWED` (csv)
 
 ### Limits
 
@@ -112,8 +116,12 @@ APP_ENV=development
 APP_LOG_LEVEL=DEBUG
 
 TTS_PROVIDER=mlx_audio
-TTS_MODEL_DEFAULT=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit
-TTS_MODEL_ALLOWED=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit,Qwen/Qwen3-TTS-12Hz-0.6B-Base
+TTS_MLX_AUDIO_MODEL_DEFAULT=Qwen/Qwen3-TTS-12Hz-0.6B-Base
+TTS_MLX_AUDIO_MODEL_ALLOWED=Qwen/Qwen3-TTS-12Hz-0.6B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-Base
+TTS_VOXTRAL_MODEL_DEFAULT=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit
+TTS_VOXTRAL_MODEL_ALLOWED=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit,mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit
+TTS_VLLM_OMNI_MODEL_DEFAULT=vllm-omni/default-tts
+TTS_VLLM_OMNI_MODEL_ALLOWED=vllm-omni/default-tts
 
 TTS_MAX_INPUT_CHARS=4096
 TTS_VOICE_MAP_FILE=./config/voice_map.local.json
@@ -126,11 +134,11 @@ STT_MODEL_ALLOWED=whisper-1
 
 For `POST /v1/audio/speech`:
 
-1. Resolve `model` from request or `TTS_MODEL_DEFAULT`.
-2. Resolve `provider` from request or fallback `TTS_PROVIDER`.
-3. Validate model against `TTS_MODEL_ALLOWED`.
+1. Resolve `provider` from request or fallback `TTS_PROVIDER`.
+2. Resolve `model` from request or provider-specific default (`TTS_MLX_AUDIO_MODEL_DEFAULT` / `TTS_VOXTRAL_MODEL_DEFAULT` / `TTS_VLLM_OMNI_MODEL_DEFAULT`).
+3. Validate model against provider-specific allow-list (`TTS_MLX_AUDIO_MODEL_ALLOWED` / `TTS_VOXTRAL_MODEL_ALLOWED` / `TTS_VLLM_OMNI_MODEL_ALLOWED`).
 4. Resolve voice from `TTS_VOICE_MAP_FILE`.
-5. Chunk text (`TTS_MAX_INPUT_CHARS`) and dispatch `mlx_audio` synthesis.
+5. Chunk text (`TTS_MAX_INPUT_CHARS`) and dispatch selected provider synthesis.
 
 ## Speech Request Notes
 
