@@ -187,6 +187,19 @@ Voice entry fields:
 - `target_db`: normalization target RMS in dB
 - `max_sentences_per_chunk`: semantic split limit
 
+For Qwen TTS voice cloning, use short, clean reference audio: target **3-10 seconds** (best around ~10s selected from a
+longer 30s+ recording), `WAV` format, mono channel, and at least 16 kHz sample rate (24 kHz is a solid default). Record
+natural speech with clear articulation and a bit of emotional variation, avoid music/laughter/background noise, and pick
+a segment that matches the pronunciation style you expect in generation. Always set `ref_text` together with
+`ref_audio_path` using the **exact transcript** of the chosen clip, since alignment strongly improves cloning stability
+and intelligibility. Before use, you can pre-clean a candidate sample with:
+
+```bash
+ffmpeg -y -i input.wav \
+  -af "aformat=channel_layouts=mono,aresample=24000:resampler=soxr,highpass=f=80,lowpass=f=8000,afftdn=nf=-23,acompressor=threshold=-21dB:ratio=2.5:attack=4:release=60:makeup=2" \
+  -ar 24000 -sample_fmt s16 ref_audio.wav
+```
+
 Example:
 
 ```json
