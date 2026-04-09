@@ -7,9 +7,9 @@ OpenAI-compatible local audio API (FastAPI) with a modular TTS pipeline and plug
 - Exposes OpenAI-like endpoints under `/v1`.
 - Generates speech with `POST /v1/audio/speech`.
 - Supports multiple TTS providers behind a single service contract:
-  - `mlx_audio`
-  - `voxtral`
-  - `vllm-omni`
+    - `mlx_audio`
+    - `voxtral`
+    - `vllm-omni`
 - Loads voice cloning metadata from a JSON voice map.
 - Preprocesses text for better prosody and language stability.
 - Post-processes each generated WAV chunk with RMS normalization.
@@ -33,16 +33,16 @@ The refactor applies explicit patterns to keep the codebase maintainable:
 Implemented in `src/llm_tts_api/services/text_preprocessing.py`:
 
 - punctuation cleanup:
-  - collapses duplicate punctuation and spaces
-  - removes noisy line-break punctuation artifacts
+    - collapses duplicate punctuation and spaces
+    - removes noisy line-break punctuation artifacts
 - date expansion:
-  - converts `dd/mm/yyyy` into spoken words (language-aware)
+    - converts `dd/mm/yyyy` into spoken words (language-aware)
 - number expansion:
-  - converts standalone integers using `num2words`
+    - converts standalone integers using `num2words`
 - semantic chunking:
-  - splits by sentence boundaries
-  - respects `TTS_MAX_INPUT_CHARS`
-  - enforces per-voice `max_sentences_per_chunk`
+    - splits by sentence boundaries
+    - respects `TTS_MAX_INPUT_CHARS`
+    - enforces per-voice `max_sentences_per_chunk`
 
 ### 2) Processing (Synthesis)
 
@@ -93,29 +93,26 @@ sequenceDiagram
     participant Provider as Provider Strategy
     participant Post as Audio Postprocessing
     participant Resp as SpeechResponseFactory
-
-    Client->>Router: POST /v1/audio/speech
-    Router->>Service: create_speech(request, stream)
-    Service->>Resolver: resolve(request)
-    Resolver->>MR: resolve_tts_target(model, provider)
-    MR-->>Resolver: (model, provider)
-    Resolver->>Resolver: validate voice + preprocess text + split chunks
-    Resolver-->>Service: ResolvedSpeechRequest
-
-    Service->>Synth: generate(resolved)
-    Synth->>PR: get(provider)
-    PR-->>Synth: provider strategy
+    Client ->> Router: POST /v1/audio/speech
+    Router ->> Service: create_speech(request, stream)
+    Service ->> Resolver: resolve(request)
+    Resolver ->> MR: resolve_tts_target(model, provider)
+    MR -->> Resolver: (model, provider)
+    Resolver ->> Resolver: validate voice + preprocess text + split chunks
+    Resolver -->> Service: ResolvedSpeechRequest
+    Service ->> Synth: generate(resolved)
+    Synth ->> PR: get(provider)
+    PR -->> Synth: provider strategy
     loop for each chunk
-        Synth->>Provider: synthesize_chunks(SynthesisRequest)
-        Provider-->>Synth: wav chunk
+        Synth ->> Provider: synthesize_chunks(SynthesisRequest)
+        Provider -->> Synth: wav chunk
     end
-    Synth->>Post: normalize_wav_rms(chunk)
-    Synth->>Post: concat chunks
-    Post-->>Service: merged wav
-
-    Service->>Resp: build(wav, stream)
-    Resp-->>Router: FileResponse or StreamingResponse
-    Router-->>Client: audio/wav
+    Synth ->> Post: normalize_wav_rms(chunk)
+    Synth ->> Post: concat chunks
+    Post -->> Service: merged wav
+    Service ->> Resp: build(wav, stream)
+    Resp -->> Router: FileResponse or StreamingResponse
+    Router -->> Client: audio/wav
 ```
 
 ## Project Structure
