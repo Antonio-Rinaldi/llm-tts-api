@@ -14,9 +14,12 @@ from llm_tts_api.services.tts_providers.voice_args import build_generation_args
 
 
 class VoxtralTTSProvider(CachedModelProvider):
+    """Voxtral provider strategy restricted to reference-audio cloning mode."""
+
     provider_name = "voxtral"
 
     def _load_model(self, model_name: str):
+        """Load and return a Voxtral model through mlx-audio."""
         try:
             import mlx_audio.tts.utils as mlx_audio_model
         except Exception as exc:  # noqa: BLE001
@@ -37,6 +40,7 @@ class VoxtralTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _signature_params(model: object) -> set[str]:
+        """Inspect supported generation parameters with safe defaults."""
         try:
             return set(inspect.signature(model.generate).parameters.keys())
         except Exception:  # noqa: BLE001
@@ -44,6 +48,7 @@ class VoxtralTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _build_generate_kwargs(request: SynthesisRequest, chunk: str, params: set[str]) -> dict[str, Any]:
+        """Build synthesis args and enforce cloning-only policy for Voxtral provider."""
         if not request.voice.ref_audio_path:
             raise invalid_request(
                 "Voxtral provider requires voice cloning references (ref_audio_path/ref_text)",
@@ -69,6 +74,7 @@ class VoxtralTTSProvider(CachedModelProvider):
         }
 
     def synthesize_chunks(self, request: SynthesisRequest) -> list[bytes]:
+        """Synthesize all chunks and return WAV payloads for concatenation."""
         model = self._get_model(request.model_name)
         model_lock = self._get_model_lock(request.model_name)
         output: list[bytes] = []

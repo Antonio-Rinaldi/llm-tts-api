@@ -19,6 +19,7 @@ from llm_tts_api.routers.realtime import router as realtime_router
 
 
 def _load_env_file(path: Path) -> None:
+    """Load key/value pairs from a dotenv-style file into ``os.environ``."""
     if not path.exists() or not path.is_file():
         return
 
@@ -34,17 +35,19 @@ def _load_env_file(path: Path) -> None:
 
 
 def _load_default_env_files() -> None:
+    """Load project-level ``.env`` and ``.env.local`` files when present."""
     project_root = Path(__file__).resolve().parents[2]
     _load_env_file(project_root / ".env")
     _load_env_file(project_root / ".env.local")
 
 
 def create_app() -> FastAPI:
+    """Create and configure the FastAPI application instance."""
     setup_logging(os.getenv("APP_LOG_LEVEL", "INFO"))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        # Fail fast on startup if default model preload is broken.
+        """Warm startup dependencies and fail early if preload breaks."""
         dependencies.get_tts_service()
         yield
 
@@ -52,6 +55,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(OpenAIHTTPException)
     async def openai_exception_handler(_, exc: OpenAIHTTPException) -> JSONResponse:
+        """Return OpenAI-compatible error envelopes."""
         return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
 
     app.include_router(health_router)
@@ -63,6 +67,7 @@ def create_app() -> FastAPI:
 
 
 def run() -> None:
+    """Run the API server with uvicorn default local settings."""
     uvicorn.run(
         "llm_tts_api.main:app",
         host="0.0.0.0",

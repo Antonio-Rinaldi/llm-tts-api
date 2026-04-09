@@ -18,9 +18,12 @@ from llm_tts_api.services.tts_providers.voice_args import (
 
 
 class MLXAudioTTSProvider(CachedModelProvider):
+    """Generic mlx-audio provider supporting clone and named-voice synthesis."""
+
     provider_name = "mlx_audio"
 
     def _load_model(self, model_name: str):
+        """Load and return an ``mlx_audio`` TTS model instance."""
         try:
             import mlx_audio.tts.utils as mlx_audio_model
         except Exception as exc:  # noqa: BLE001
@@ -41,6 +44,7 @@ class MLXAudioTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _signature_params(model: object) -> set[str]:
+        """Inspect supported generate parameters, with safe fallback defaults."""
         try:
             return set(inspect.signature(model.generate).parameters.keys())
         except Exception:  # noqa: BLE001
@@ -48,6 +52,7 @@ class MLXAudioTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _build_voice_selection(request: SynthesisRequest, params: set[str]) -> VoiceArgsSelection:
+        """Choose clone or named voice arguments according to project policy."""
         selection = select_voice_args(
             voice_name=request.voice_name,
             ref_audio_path=request.voice.ref_audio_path,
@@ -66,6 +71,7 @@ class MLXAudioTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _generation_args(request: SynthesisRequest, params: set[str]) -> dict[str, Any]:
+        """Build provider generation arguments (language/temperature/top_p)."""
         if request.generation is None:
             return {}
         return build_generation_args(
@@ -76,6 +82,7 @@ class MLXAudioTTSProvider(CachedModelProvider):
         )
 
     def synthesize_chunks(self, request: SynthesisRequest) -> list[bytes]:
+        """Synthesize all chunks and return WAV payloads."""
         model = self._get_model(request.model_name)
         model_lock = self._get_model_lock(request.model_name)
         output: list[bytes] = []
@@ -91,9 +98,12 @@ class MLXAudioTTSProvider(CachedModelProvider):
                     results = model.generate(**synthesis_args)
                 except AssertionError as exc:
                     if voice_selection.used_named_voice and voice_selection.clone_fallback_args:
-                        results = model.generate(
-                            **{"text": chunk, **voice_selection.clone_fallback_args, **generation_args}
-                        )
+                        fallback_args = {
+                            "text": chunk,
+                            **voice_selection.clone_fallback_args,
+                            **generation_args,
+                        }
+                        results = model.generate(**fallback_args)
                     else:
                         raise invalid_request(str(exc), param="voice") from exc
 

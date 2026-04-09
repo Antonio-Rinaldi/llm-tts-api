@@ -2,6 +2,8 @@ from pydantic import BaseModel
 
 
 class SpeechRequest(BaseModel):
+    """OpenAI-compatible speech synthesis request payload."""
+
     model: str
     input: str
     voice: str

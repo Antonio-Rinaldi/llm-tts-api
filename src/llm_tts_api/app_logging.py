@@ -4,6 +4,7 @@ import logging
 
 
 def setup_logging(level_name: str = "INFO") -> str:
+    """Configure root and uvicorn loggers and return the normalized level name."""
     level = getattr(logging, (level_name or "INFO").upper(), logging.INFO)
     fmt = "%(asctime)s %(levelname)-5s %(name)s | %(message)s"
 

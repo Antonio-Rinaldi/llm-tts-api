@@ -7,10 +7,21 @@ import numpy as np
 
 
 def _dtype_for_width(sample_width: int) -> np.dtype[np.signedinteger] | None:
+    """Map WAV sample width to the corresponding signed integer dtype."""
     return {2: np.int16, 4: np.int32}.get(sample_width)
 
 
 def normalize_wav_rms(wav_bytes: bytes, target_db: float) -> bytes:
+    """Normalize a WAV payload to a target RMS level in dBFS.
+
+    Args:
+        wav_bytes: Raw WAV bytes.
+        target_db: Desired RMS level in dBFS.
+
+    Returns:
+        New WAV bytes normalized at the target level.
+    """
+
     if not wav_bytes:
         return wav_bytes
 

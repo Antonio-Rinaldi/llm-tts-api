@@ -1,27 +1,67 @@
 # llm-tts-api
 
-OpenAI-compatible local audio API built with FastAPI and pluggable TTS providers, currently focused on local MLX-backed generation flows.
+OpenAI-compatible local audio API (FastAPI) with a modular TTS pipeline and pluggable providers.
 
-## Core Features
+## What This Service Does
 
-- OpenAI-style endpoint surface under `/v1`.
-- Text-to-speech generation via `POST /v1/audio/speech`.
-- Provider strategy routing via a single `mlx_audio` provider.
-- Voice cloning through reference voice map metadata.
-- Fail-fast startup preload of default TTS model.
-- Automatic semantic chunking for long text input.
-- Stream and non-stream response modes.
-- Strict validation for model allow-lists and voice configuration.
+- Exposes OpenAI-like endpoints under `/v1`.
+- Generates speech with `POST /v1/audio/speech`.
+- Supports multiple TTS providers behind a single service contract:
+  - `mlx_audio`
+  - `voxtral`
+  - `vllm-omni`
+- Loads voice cloning metadata from a JSON voice map.
+- Preprocesses text for better prosody and language stability.
+- Post-processes each generated WAV chunk with RMS normalization.
+- Streams audio or returns a temporary file response.
 
-## Why The Main Choices Were Made
+## Architecture And Design Choices
 
-- **OpenAI-compatible contract**: lets clients switch backends without rewriting business logic.
-- **Provider registry pattern**: isolates provider-specific code and keeps API layer stable.
-- **Startup preload fail-fast**: catches missing dependencies/model loading issues before traffic.
-- **Voice map file**: avoids hardcoding voice references in code and supports environment-specific deployment paths.
-- **Chunked synthesis**: reduces per-request risk and keeps long narration payloads reliable.
+The refactor applies explicit patterns to keep the codebase maintainable:
 
-## Endpoint Status
+- **Facade**: `TTSService` exposes one coherent entry point for speech creation.
+- **Strategy**: provider implementations in `services/tts_providers/` share one contract.
+- **Registry**: `TTSProviderRegistry` resolves provider names to strategy instances.
+- **Pipeline**: request flow is split into preprocessing -> generation -> post-processing.
+- **Fail-fast configuration**: `Settings` validates env and voice map at startup.
+- **Dependency injection**: FastAPI dependencies provide singleton services.
+
+## Speech Pipeline (Detailed)
+
+### 1) Preprocessing
+
+Implemented in `src/llm_tts_api/services/text_preprocessing.py`:
+
+- punctuation cleanup:
+  - collapses duplicate punctuation and spaces
+  - removes noisy line-break punctuation artifacts
+- date expansion:
+  - converts `dd/mm/yyyy` into spoken words (language-aware)
+- number expansion:
+  - converts standalone integers using `num2words`
+- semantic chunking:
+  - splits by sentence boundaries
+  - respects `TTS_MAX_INPUT_CHARS`
+  - enforces per-voice `max_sentences_per_chunk`
+
+### 2) Processing (Synthesis)
+
+Implemented in `src/llm_tts_api/services/tts_service.py` and provider strategies:
+
+- resolve provider and model through `ModelRegistry`
+- validate voice from `TTS_VOICE_MAP_FILE`
+- pass `GenerationOptions` to provider (`language`, `temperature`, `top_p`)
+- synthesize chunk-by-chunk through strategy interface
+
+### 3) Post-processing
+
+Implemented in `src/llm_tts_api/services/audio_postprocessing.py`:
+
+- per-chunk RMS normalization to target dB (`target_db` in voice config)
+- chunk-safe WAV concatenation with strict parameter compatibility checks
+- stream or file response creation with automatic temp file cleanup
+
+## Endpoints
 
 ### Implemented
 
@@ -30,25 +70,64 @@ OpenAI-compatible local audio API built with FastAPI and pluggable TTS providers
 - `GET /v1/models`
 - `POST /v1/audio/speech`
 
-### Compatibility stubs (`501 not_implemented`)
+### Stubbed (returns `501`)
 
 - `POST /v1/audio/transcriptions`
 - `POST /v1/audio/translations`
-- `POST /v1/audio/voices`
-- `GET/POST /v1/audio/voice_consents`
-- `GET/POST/DELETE /v1/audio/voice_consents/{consent_id}`
-- Chat routes under `/v1/chat/completions...`
-- Realtime routes under `/v1/realtime...`
+- voice consent / voice enrollment endpoints
+- chat endpoints under `/v1/chat/...`
+- realtime endpoints under `/v1/realtime/...`
+
+## Request Flow Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Router as /v1/audio/speech
+    participant Service as TTSService (Facade)
+    participant Resolver as SpeechRequestResolver
+    participant MR as ModelRegistry
+    participant Synth as SpeechSynthesizer
+    participant PR as ProviderRegistry
+    participant Provider as Provider Strategy
+    participant Post as Audio Postprocessing
+    participant Resp as SpeechResponseFactory
+
+    Client->>Router: POST /v1/audio/speech
+    Router->>Service: create_speech(request, stream)
+    Service->>Resolver: resolve(request)
+    Resolver->>MR: resolve_tts_target(model, provider)
+    MR-->>Resolver: (model, provider)
+    Resolver->>Resolver: validate voice + preprocess text + split chunks
+    Resolver-->>Service: ResolvedSpeechRequest
+
+    Service->>Synth: generate(resolved)
+    Synth->>PR: get(provider)
+    PR-->>Synth: provider strategy
+    loop for each chunk
+        Synth->>Provider: synthesize_chunks(SynthesisRequest)
+        Provider-->>Synth: wav chunk
+    end
+    Synth->>Post: normalize_wav_rms(chunk)
+    Synth->>Post: concat chunks
+    Post-->>Service: merged wav
+
+    Service->>Resp: build(wav, stream)
+    Resp-->>Router: FileResponse or StreamingResponse
+    Router-->>Client: audio/wav
+```
 
 ## Project Structure
 
-- `src/llm_tts_api/`: application package.
-- `src/llm_tts_api/routers/`: API route handlers.
-- `src/llm_tts_api/services/`: model registry, TTS service, provider strategies.
-- `src/llm_tts_api/services/tts_providers/`: provider implementations.
-- `config/`: environment and voice map examples.
-- `voices/`: local reference voice audio samples.
-- `tests/`: unit/integration tests.
+- `src/llm_tts_api/config.py`: validated runtime settings and voice map parsing.
+- `src/llm_tts_api/dependencies.py`: singleton dependency factories.
+- `src/llm_tts_api/services/tts_service.py`: orchestration facade + internal pipeline components.
+- `src/llm_tts_api/services/text_preprocessing.py`: input normalization/chunking.
+- `src/llm_tts_api/services/audio_postprocessing.py`: loudness normalization.
+- `src/llm_tts_api/services/tts_providers/`: provider strategies and shared argument helpers.
+- `src/llm_tts_api/routers/`: API routes.
+- `tests/`: unit and integration tests.
 
 ## Install
 
@@ -59,9 +138,7 @@ pip install -U pip
 pip install -e ".[dev]"
 ```
 
-## Run Modes
-
-The app auto-loads `.env` and `.env.local` during startup.
+## Run
 
 ```bash
 uvicorn llm_tts_api.main:app --host 0.0.0.0 --port 8000 --workers 1
@@ -75,7 +152,7 @@ python -m llm_tts_api.main
 llm-tts-api
 ```
 
-## Configuration Reference
+## Configuration
 
 ### App
 
@@ -83,7 +160,7 @@ llm-tts-api
 - `APP_ENV` (default: `development`)
 - `APP_LOG_LEVEL` (default: `INFO`)
 
-### TTS routing
+### Provider routing
 
 - `TTS_PROVIDER` (default: `mlx_audio`)
 - `TTS_MLX_AUDIO_MODEL_DEFAULT`
@@ -95,18 +172,40 @@ llm-tts-api
 
 ### Limits
 
-- `TTS_MAX_INPUT_CHARS` (default: `4096`, must be `>= 256`)
+- `TTS_MAX_INPUT_CHARS` (default: `4096`, minimum `256`)
 - `TTS_MAX_CONCURRENT_REQUESTS` (default: `1`)
-  - In-process synthesis concurrency limit; keep `1` for MLX/Metal stability
 
 ### Voice map
 
 - `TTS_VOICE_MAP_FILE` (required)
 
-### STT placeholders
+Voice entry fields:
 
-- `STT_MODEL_DEFAULT`
-- `STT_MODEL_ALLOWED`
+- `ref_audio_path`: path to cloning reference audio
+- `ref_text`: optional reference transcript
+- `language`: synthesis language label
+- `number_lang`: optional language override for date/number expansion
+- `temperature`: generation temperature
+- `top_p`: generation top-p
+- `target_db`: normalization target RMS in dB
+- `max_sentences_per_chunk`: semantic split limit
+
+Example:
+
+```json
+{
+  "gold": {
+    "ref_audio_path": "/absolute/path/to/gold.wav",
+    "ref_text": "Ciao, questa e una voce di riferimento.",
+    "language": "Italian",
+    "number_lang": "it",
+    "temperature": 0.8,
+    "top_p": 0.95,
+    "target_db": -20.0,
+    "max_sentences_per_chunk": 2
+  }
+}
+```
 
 ## Example `.env.local`
 
@@ -119,115 +218,16 @@ TTS_PROVIDER=mlx_audio
 TTS_MLX_AUDIO_MODEL_DEFAULT=Qwen/Qwen3-TTS-12Hz-0.6B-Base
 TTS_MLX_AUDIO_MODEL_ALLOWED=Qwen/Qwen3-TTS-12Hz-0.6B-Base,Qwen/Qwen3-TTS-12Hz-1.7B-Base
 TTS_VOXTRAL_MODEL_DEFAULT=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit
-TTS_VOXTRAL_MODEL_ALLOWED=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit,mlx-community/Voxtral-Mini-4B-Realtime-2602-4bit
+TTS_VOXTRAL_MODEL_ALLOWED=mlx-community/Voxtral-4B-TTS-2603-mlx-4bit
 TTS_VLLM_OMNI_MODEL_DEFAULT=vllm-omni/default-tts
 TTS_VLLM_OMNI_MODEL_ALLOWED=vllm-omni/default-tts
 
 TTS_MAX_INPUT_CHARS=4096
+TTS_MAX_CONCURRENT_REQUESTS=1
 TTS_VOICE_MAP_FILE=./config/voice_map.local.json
-
-STT_MODEL_DEFAULT=whisper-1
-STT_MODEL_ALLOWED=whisper-1
 ```
 
-## Model and Provider Resolution Logic
-
-For `POST /v1/audio/speech`:
-
-1. Resolve `provider` from request or fallback `TTS_PROVIDER`.
-2. Resolve `model` from request or provider-specific default (`TTS_MLX_AUDIO_MODEL_DEFAULT` / `TTS_VOXTRAL_MODEL_DEFAULT` / `TTS_VLLM_OMNI_MODEL_DEFAULT`).
-3. Validate model against provider-specific allow-list (`TTS_MLX_AUDIO_MODEL_ALLOWED` / `TTS_VOXTRAL_MODEL_ALLOWED` / `TTS_VLLM_OMNI_MODEL_ALLOWED`).
-4. Resolve voice from `TTS_VOICE_MAP_FILE`.
-5. Chunk text (`TTS_MAX_INPUT_CHARS`) and dispatch selected provider synthesis.
-
-## Speech Request Notes
-
-### Body fields
-
-- `model`
-- `provider` (optional)
-- `input`
-- `voice`
-- `response_format` (`wav` only)
-- `instructions` (accepted and forwarded where supported)
-- `speed` (accepted by schema)
-- `stream_format` (accepted by schema)
-
-### Query
-
-- `stream` (`true` or `false`)
-
-## Voice Map Schema
-
-Each voice key requires:
-
-- `ref_audio_path`
-- `ref_text`
-- `language`
-
-Example:
-
-```json
-{
-  "gold": {
-    "ref_audio_path": "/absolute/path/to/voices/gold.wav",
-    "ref_text": "Ciao, questa e una voce di riferimento per il clonaggio.",
-    "language": "Italian"
-  }
-}
-```
-
-## Detailed Sequence Diagram (`/v1/audio/speech`)
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client
-    participant API as FastAPI Router
-    participant Dep as Dependencies
-    participant TTS as TTSService
-    participant MR as ModelRegistry
-    participant PR as ProviderRegistry
-    participant Prov as Provider (mlx_audio)
-    participant Voice as Voice Map Config
-    participant FS as Temp File Storage
-
-    Client->>API: POST /v1/audio/speech?stream={bool}
-    API->>Dep: get_tts_service()
-    Dep-->>API: cached TTSService
-    API->>TTS: create_speech(request, stream)
-
-    TTS->>MR: resolve_tts_target(model, provider)
-    MR-->>TTS: resolved model + provider
-    TTS->>MR: is_allowed_tts_model(model)
-    MR-->>TTS: true/false
-
-    TTS->>Voice: load voice from settings.tts_voice_map
-    Voice-->>TTS: ref_audio_path, ref_text, language
-
-    TTS->>TTS: split_text_semantic(input, TTS_MAX_INPUT_CHARS)
-    TTS->>PR: get(provider)
-    PR-->>TTS: provider strategy
-
-    loop each text chunk
-        TTS->>Prov: synthesize_chunks(SynthesisRequest)
-        Prov-->>TTS: wav chunk bytes[]
-    end
-
-    TTS->>TTS: concatenate wav chunks
-
-    alt stream=true
-        TTS-->>API: StreamingResponse(audio/wav)
-        API-->>Client: streamed WAV bytes
-    else stream=false
-        TTS->>FS: write temp .wav file
-        TTS-->>API: FileResponse + cleanup callback
-        API-->>Client: file download
-        API->>FS: remove temp file after response
-    end
-```
-
-## Request Examples
+## Quick Request Example
 
 ```bash
 curl -X POST "http://localhost:8000/v1/audio/speech" \
@@ -236,44 +236,22 @@ curl -X POST "http://localhost:8000/v1/audio/speech" \
     "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
     "provider": "mlx_audio",
     "voice": "gold",
-    "input": "Ciao, questo e un test.",
+    "input": "Il 15/04/2026 abbiamo 2 appuntamenti.",
     "response_format": "wav"
-  }' --output speech_mlx_audio_qwen.wav
+  }' \
+  --output speech.wav
 ```
+
+## Testing
 
 ```bash
-curl -X POST "http://localhost:8000/v1/audio/speech?stream=true" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit",
-    "provider": "mlx_audio",
-    "voice": "gold",
-    "input": "Hello, this is a Voxtral streaming synthesis test.",
-    "response_format": "wav"
-  }' --output speech_mlx_audio_voxtral_stream.wav
+pytest -q
 ```
 
-## Operational Notes
+## Key Files To Read First
 
-- For MLX stability, prefer controlled concurrency and avoid unsafe shared model execution patterns.
-- Startup intentionally preloads the default model and fails fast if preload fails.
-- Use `APP_LOG_LEVEL=DEBUG` for HTTP and provider-level tracing.
-
----
-
-## Run tests
-
-```bash
-python -m pytest -q tests
-```
-
----
-
-## Useful files
-
-- `examples.http` request collection
-- `config/voice_map.example.json` starter template
-- `src/llm_tts_api/config.py` runtime settings and validation
-- `src/llm_tts_api/services/model_registry.py` model/provider resolution
-- `src/llm_tts_api/services/tts_service.py` speech orchestration
-- `src/llm_tts_api/services/tts_providers/` provider strategies
+- `src/llm_tts_api/services/tts_service.py`
+- `src/llm_tts_api/services/text_preprocessing.py`
+- `src/llm_tts_api/services/audio_postprocessing.py`
+- `src/llm_tts_api/services/tts_providers/voice_args.py`
+- `src/llm_tts_api/config.py`

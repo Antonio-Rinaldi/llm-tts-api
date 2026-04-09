@@ -8,6 +8,8 @@ from llm_tts_api.config import VoiceConfig
 
 @dataclass(slots=True, frozen=True)
 class GenerationOptions:
+    """Provider-agnostic generation tuning values."""
+
     language: str
     temperature: float
     top_p: float
@@ -15,6 +17,8 @@ class GenerationOptions:
 
 @dataclass(slots=True)
 class SynthesisRequest:
+    """Normalized request passed from service layer to a provider strategy."""
+
     model_name: str
     chunks: list[str]
     voice: VoiceConfig
@@ -24,8 +28,11 @@ class SynthesisRequest:
 
 
 class TTSProviderStrategy(Protocol):
+    """Strategy contract implemented by every TTS provider backend."""
+
     provider_name: str
 
     def synthesize_chunks(self, request: SynthesisRequest) -> list[bytes]:
+        """Generate one WAV payload per input chunk."""
         ...
 

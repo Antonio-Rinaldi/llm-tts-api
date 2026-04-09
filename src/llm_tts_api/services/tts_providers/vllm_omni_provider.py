@@ -19,10 +19,13 @@ from llm_tts_api.services.tts_providers.voice_args import (
 
 
 class VllmOmniTTSProvider(CachedModelProvider):
+    """Adapter strategy for vllm-omni TTS backends."""
+
     provider_name = "vllm-omni"
 
     @staticmethod
     def _resolve_loader() -> Any:
+        """Resolve a compatible ``load`` callable from vllm-omni modules."""
         candidates = [
             ("vllm_omni.tts.utils", "load"),
             ("vllm_omni.tts", "load"),
@@ -47,6 +50,7 @@ class VllmOmniTTSProvider(CachedModelProvider):
         ) from last_exc
 
     def _load_model(self, model_name: str):
+        """Load and return a vllm-omni model instance."""
         try:
             loader = self._resolve_loader()
             model = loader(model_name)
@@ -62,6 +66,7 @@ class VllmOmniTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _signature_params(model: object) -> set[str]:
+        """Return generate signature parameters or a robust fallback list."""
         generate = getattr(model, "generate", None)
         if callable(generate):
             try:
@@ -81,6 +86,7 @@ class VllmOmniTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _build_voice_selection(request: SynthesisRequest, params: set[str]) -> VoiceArgsSelection:
+        """Select named/cloned voice arguments for vllm-omni synthesis."""
         return select_voice_args(
             voice_name=request.voice_name,
             ref_audio_path=request.voice.ref_audio_path,
@@ -92,6 +98,7 @@ class VllmOmniTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _generation_args(request: SynthesisRequest, params: set[str]) -> dict[str, Any]:
+        """Build optional generation arguments for supported models."""
         if request.generation is None:
             return {}
         return build_generation_args(
@@ -103,6 +110,7 @@ class VllmOmniTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _generate(model: object, kwargs: dict[str, str]) -> Any:
+        """Invoke model generation regardless of object calling style."""
         generate = getattr(model, "generate", None)
         if callable(generate):
             return generate(**kwargs)
@@ -115,6 +123,7 @@ class VllmOmniTTSProvider(CachedModelProvider):
 
     @staticmethod
     def _result_to_wav_bytes(result: object) -> bytes:
+        """Convert provider results to WAV bytes across supported payload shapes."""
         if isinstance(result, bytes):
             return result
 
@@ -145,6 +154,7 @@ class VllmOmniTTSProvider(CachedModelProvider):
         return buf.getvalue()
 
     def synthesize_chunks(self, request: SynthesisRequest) -> list[bytes]:
+        """Synthesize request chunks and normalize output payload shapes."""
         model = self._get_model(request.model_name)
         model_lock = self._get_model_lock(request.model_name)
         output: list[bytes] = []
@@ -164,9 +174,14 @@ class VllmOmniTTSProvider(CachedModelProvider):
                     results = self._generate(model, synthesis_args)
                 except AssertionError as exc:
                     if voice_selection.used_named_voice and voice_selection.clone_fallback_args:
+                        fallback_args = {
+                            "text": chunk,
+                            **voice_selection.clone_fallback_args,
+                            **generation_args,
+                        }
                         results = self._generate(
                             model,
-                            {"text": chunk, **voice_selection.clone_fallback_args, **generation_args},
+                            fallback_args,
                         )
                     elif voice_selection.used_named_voice:
                         results = self._generate(model, {"text": chunk, **generation_args})

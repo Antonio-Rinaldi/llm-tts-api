@@ -64,11 +64,13 @@ _MONTH_NAMES: dict[str, dict[int, str]] = {
 
 
 def resolve_number_language(language: str) -> str:
+    """Resolve a user-facing language label to a ``num2words`` language code."""
     normalized = (language or "").strip().lower()
     return _LANGUAGE_ALIASES.get(normalized, "en")
 
 
 def clean_punctuation(text: str) -> str:
+    """Normalize punctuation and spacing to help prosody prediction."""
     collapsed = _PUNCT_SPACING_RE.sub(" ", text)
     no_duplicate_dots = _DUPLICATE_DOTS_RE.sub(".", collapsed)
     no_duplicate_marks = _DUPLICATE_PUNCT_RE.sub(r"\1", no_duplicate_dots)
@@ -77,6 +79,7 @@ def clean_punctuation(text: str) -> str:
 
 
 def _number_to_words(value: int, lang_code: str) -> str:
+    """Convert an integer to words using ``num2words`` with fallback behavior."""
     if num2words is None:
         return str(value)
     try:
@@ -86,6 +89,7 @@ def _number_to_words(value: int, lang_code: str) -> str:
 
 
 def _date_to_words(day: int, month: int, year: int, lang_code: str) -> str:
+    """Convert date components into spoken text for supported languages."""
     month_name = _MONTH_NAMES.get(lang_code, {}).get(month)
     if month_name is None:
         return f"{day}/{month}/{year}"
@@ -95,7 +99,10 @@ def _date_to_words(day: int, month: int, year: int, lang_code: str) -> str:
 
 
 def expand_dates(text: str, lang_code: str) -> str:
+    """Expand dates in ``dd/mm/yyyy`` format into spoken words."""
+
     def _replace(match: re.Match[str]) -> str:
+        """Transform one date regex match into a language-aware spoken form."""
         day, month, year = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
         # Keep two-digit years in the 2000 range for modern books/transcripts.
         normalized_year = year + 2000 if year < 100 else year
@@ -109,15 +116,33 @@ def expand_dates(text: str, lang_code: str) -> str:
 
 
 def expand_numbers(text: str, lang_code: str) -> str:
+    """Expand standalone numeric tokens into spoken words."""
     return _STANDALONE_NUMBER_RE.sub(lambda m: _number_to_words(int(m.group(0)), lang_code), text)
 
 
 def preprocess_for_tts(text: str, language: str) -> str:
+    """Apply punctuation cleanup plus date/number expansion for TTS stability."""
     lang_code = resolve_number_language(language)
     return clean_punctuation(expand_numbers(expand_dates(text, lang_code), lang_code))
 
 
+def _paragraph_sentences(paragraph: str) -> list[str]:
+    """Split one paragraph into non-empty sentences."""
+    return [sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(paragraph) if sentence.strip()]
+
+
 def split_text_semantic(text: str, max_chars: int, max_sentences_per_chunk: int = 2) -> list[str]:
+    """Split text by sentence boundaries while respecting chunk size limits.
+
+    Args:
+        text: Input text to split.
+        max_chars: Hard character limit for each output chunk.
+        max_sentences_per_chunk: Maximum sentence count grouped in one chunk.
+
+    Returns:
+        Ordered chunks suitable for chunk-by-chunk TTS generation.
+    """
+
     cleaned = text.strip()
     if not cleaned:
         return []
@@ -126,13 +151,14 @@ def split_text_semantic(text: str, max_chars: int, max_sentences_per_chunk: int 
     sentences = [
         sentence
         for paragraph in paragraphs
-        for sentence in ([s.strip() for s in _SENTENCE_SPLIT_RE.split(paragraph) if s.strip()] or [paragraph])
+        for sentence in (_paragraph_sentences(paragraph) or [paragraph])
     ]
 
     chunks: list[str] = []
     current_sentences: list[str] = []
 
     def flush() -> None:
+        """Push the current sentence accumulator into output chunks."""
         if current_sentences:
             chunks.append(" ".join(current_sentences).strip())
 

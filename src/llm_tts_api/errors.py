@@ -7,12 +7,15 @@ from fastapi import HTTPException
 
 @dataclass(slots=True)
 class OpenAIError:
+    """Structured OpenAI-style error payload."""
+
     message: str
     type: str
     code: str
     param: str | None = None
 
     def as_dict(self) -> dict:
+        """Serialize to the OpenAI-compatible API envelope."""
         return {
             "error": {
                 "message": self.message,
@@ -24,11 +27,15 @@ class OpenAIError:
 
 
 class OpenAIHTTPException(HTTPException):
+    """HTTPException wrapper that always carries an OpenAI error payload."""
+
     def __init__(self, status_code: int, error: OpenAIError) -> None:
+        """Initialize exception with HTTP code and standardized error payload."""
         super().__init__(status_code=status_code, detail=error.as_dict()["error"])
 
 
 def invalid_request(message: str, param: str | None = None, code: str = "invalid_parameter") -> OpenAIHTTPException:
+    """Create a standardized 400 invalid request error."""
     return OpenAIHTTPException(
         status_code=400,
         error=OpenAIError(
@@ -41,6 +48,7 @@ def invalid_request(message: str, param: str | None = None, code: str = "invalid
 
 
 def not_implemented(message: str) -> OpenAIHTTPException:
+    """Create a standardized 501 not implemented error."""
     return OpenAIHTTPException(
         status_code=501,
         error=OpenAIError(
@@ -53,6 +61,7 @@ def not_implemented(message: str) -> OpenAIHTTPException:
 
 
 def internal_error(message: str = "Internal server error") -> OpenAIHTTPException:
+    """Create a standardized 500 server error."""
     return OpenAIHTTPException(
         status_code=500,
         error=OpenAIError(
