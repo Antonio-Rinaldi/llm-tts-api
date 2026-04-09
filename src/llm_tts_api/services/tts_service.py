@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import logging
 import os
-import re
 import tempfile
 import threading
 import wave
@@ -16,11 +15,15 @@ from starlette.background import BackgroundTask
 from llm_tts_api.config import Settings, VoiceConfig
 from llm_tts_api.errors import OpenAIHTTPException, internal_error, invalid_request
 from llm_tts_api.schemas.speech import SpeechRequest
+from llm_tts_api.services.audio_postprocessing import normalize_wav_rms
 from llm_tts_api.services.model_registry import ModelRegistry
-from llm_tts_api.services.tts_providers.base import SynthesisRequest
+from llm_tts_api.services.text_preprocessing import (
+    preprocess_for_tts,
+    split_text_semantic as split_text_semantic_pipeline,
+)
+from llm_tts_api.services.tts_providers.base import GenerationOptions, SynthesisRequest
 from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
 logger = logging.getLogger(__name__)
 
 
@@ -35,72 +38,7 @@ class ResolvedSpeechRequest:
 
 
 def split_text_semantic(text: str, max_chars: int) -> list[str]:
-    cleaned = text.strip()
-    if not cleaned:
-        return []
-
-    paragraphs = [p.strip() for p in re.split(r"\n{2,}", cleaned) if p.strip()]
-    chunks: list[str] = []
-    current = ""
-
-    def flush_current() -> None:
-        nonlocal current
-        if current.strip():
-            chunks.append(current.strip())
-        current = ""
-
-    def append_part(part: str) -> None:
-        nonlocal current
-        part = part.strip()
-        if not part:
-            return
-
-        candidate = f"{current}\n\n{part}" if current else part
-        if len(candidate) <= max_chars:
-            current = candidate
-            return
-
-        flush_current()
-
-        if len(part) <= max_chars:
-            current = part
-            return
-
-        sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(part) if s.strip()]
-        if len(sentences) <= 1:
-            for i in range(0, len(part), max_chars):
-                slice_part = part[i : i + max_chars].strip()
-                if slice_part:
-                    chunks.append(slice_part)
-            return
-
-        sentence_acc = ""
-        for sentence in sentences:
-            sentence_candidate = f"{sentence_acc} {sentence}".strip() if sentence_acc else sentence
-            if len(sentence_candidate) <= max_chars:
-                sentence_acc = sentence_candidate
-                continue
-
-            if sentence_acc:
-                chunks.append(sentence_acc.strip())
-                sentence_acc = ""
-
-            if len(sentence) <= max_chars:
-                sentence_acc = sentence
-            else:
-                for i in range(0, len(sentence), max_chars):
-                    slice_part = sentence[i : i + max_chars].strip()
-                    if slice_part:
-                        chunks.append(slice_part)
-
-        if sentence_acc.strip():
-            chunks.append(sentence_acc.strip())
-
-    for paragraph in paragraphs:
-        append_part(paragraph)
-
-    flush_current()
-    return chunks
+    return split_text_semantic_pipeline(text, max_chars=max_chars, max_sentences_per_chunk=2)
 
 
 def _concat_wav_bytes(parts: list[bytes]) -> bytes:
@@ -193,7 +131,12 @@ class TTSService:
         if response_format != "wav":
             raise invalid_request("Only 'wav' response_format is currently supported", param="response_format")
 
-        chunks = split_text_semantic(request.input, self.settings.tts_max_input_chars)
+        normalized_input = preprocess_for_tts(request.input, voice.number_lang or voice.language)
+        chunks = split_text_semantic_pipeline(
+            normalized_input,
+            max_chars=self.settings.tts_max_input_chars,
+            max_sentences_per_chunk=voice.max_sentences_per_chunk,
+        )
         if not chunks:
             raise invalid_request("input is required", param="input")
 
@@ -216,9 +159,18 @@ class TTSService:
                     voice=resolved.voice,
                     voice_name=resolved.voice_name,
                     response_format=resolved.response_format,
+                    generation=GenerationOptions(
+                        language=resolved.voice.language,
+                        temperature=resolved.voice.temperature,
+                        top_p=resolved.voice.top_p,
+                    ),
                 )
             )
-        return _concat_wav_bytes(chunk_wavs)
+        normalized_chunks = [
+            normalize_wav_rms(chunk_wav, target_db=resolved.voice.target_db)
+            for chunk_wav in chunk_wavs
+        ]
+        return _concat_wav_bytes(normalized_chunks)
 
     def _build_speech_response(self, wav_bytes: bytes, stream: bool) -> FileResponse | StreamingResponse:
         if stream:
@@ -258,6 +210,4 @@ class TTSService:
             )
             raise internal_error(f"Speech generation failed: {exc}") from exc
 
-# To run with multiple workers for concurrency, use:
-# uvicorn llm_tts_api.main:app --host 0.0.0.0 --port 8000 --workers 4
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import inspect
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -9,7 +10,11 @@ import soundfile as sf
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
 from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
-from llm_tts_api.services.tts_providers.voice_args import build_clone_voice_args, build_named_voice_args
+from llm_tts_api.services.tts_providers.voice_args import (
+    VoiceArgsSelection,
+    build_generation_args,
+    select_voice_args,
+)
 
 
 class MLXAudioTTSProvider(CachedModelProvider):
@@ -42,27 +47,33 @@ class MLXAudioTTSProvider(CachedModelProvider):
             return {"text", "voice", "ref_audio", "ref_text"}
 
     @staticmethod
-    def _build_voice_kwargs(request: SynthesisRequest, params: set[str]) -> tuple[dict[str, str], bool]:
-        selected_clone_args = build_clone_voice_args(
+    def _build_voice_selection(request: SynthesisRequest, params: set[str]) -> VoiceArgsSelection:
+        selection = select_voice_args(
+            voice_name=request.voice_name,
             ref_audio_path=request.voice.ref_audio_path,
             ref_text=request.voice.ref_text,
             available_params=params,
+            prefer_clone=True,
+            require_any=True,
         )
-        if selected_clone_args:
-            return selected_clone_args, False
-
-        selected_named_voice_args = build_named_voice_args(
-            voice_name=request.voice_name,
-            available_params=params,
-        )
-        if selected_named_voice_args:
-            return selected_named_voice_args, True
+        if selection.primary_args:
+            return selection
 
         raise invalid_request(
             "No usable voice provided: configure ref_audio_path/ref_text or set request voice_name",
             param="voice",
         )
 
+    @staticmethod
+    def _generation_args(request: SynthesisRequest, params: set[str]) -> dict[str, Any]:
+        if request.generation is None:
+            return {}
+        return build_generation_args(
+            language=request.generation.language,
+            temperature=request.generation.temperature,
+            top_p=request.generation.top_p,
+            available_params=params,
+        )
 
     def synthesize_chunks(self, request: SynthesisRequest) -> list[bytes]:
         model = self._get_model(request.model_name)
@@ -71,24 +82,18 @@ class MLXAudioTTSProvider(CachedModelProvider):
 
         with model_lock:
             params = self._signature_params(model)
-            voice_kwargs, used_voice_name = self._build_voice_kwargs(request, params)
+            voice_selection = self._build_voice_selection(request, params)
+            generation_args = self._generation_args(request, params)
 
             for chunk in request.chunks:
-                kwargs: dict[str, str] = {"text": chunk, **voice_kwargs}
+                synthesis_args = {"text": chunk, **voice_selection.primary_args, **generation_args}
                 try:
-                    results = model.generate(**kwargs)
+                    results = model.generate(**synthesis_args)
                 except AssertionError as exc:
-                    # If direct voice selection fails, fallback to cloning refs when available.
-                    if used_voice_name and request.voice.ref_audio_path:
-                        fallback_kwargs = {
-                            "text": chunk,
-                            **build_clone_voice_args(
-                                ref_audio_path=request.voice.ref_audio_path,
-                                ref_text=request.voice.ref_text,
-                                available_params=params,
-                            ),
-                        }
-                        results = model.generate(**fallback_kwargs)
+                    if voice_selection.used_named_voice and voice_selection.clone_fallback_args:
+                        results = model.generate(
+                            **{"text": chunk, **voice_selection.clone_fallback_args, **generation_args}
+                        )
                     else:
                         raise invalid_request(str(exc), param="voice") from exc
 

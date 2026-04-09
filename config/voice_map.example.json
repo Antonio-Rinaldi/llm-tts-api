@@ -2,11 +2,21 @@
   "alloy": {
     "ref_audio_path": "/absolute/path/to/alloy.wav",
     "ref_text": "Reference transcript",
-    "language": "Italian"
+    "language": "Italian",
+    "number_lang": "it",
+    "temperature": 0.8,
+    "top_p": 0.95,
+    "target_db": -20.0,
+    "max_sentences_per_chunk": 2
   },
   "nova": {
     "ref_audio_path": "/absolute/path/to/nova.wav",
     "ref_text": "Reference transcript",
-    "language": "English"
+    "language": "English",
+    "number_lang": "en",
+    "temperature": 0.8,
+    "top_p": 0.95,
+    "target_db": -20.0,
+    "max_sentences_per_chunk": 2
   }
 }

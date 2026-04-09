@@ -56,6 +56,10 @@ def test_settings_voice_map_parsed(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
     assert "alloy" in settings.tts_voice_map
     assert settings.tts_voice_map["alloy"].ref_audio_path == "/tmp/alloy.wav"
+    assert settings.tts_voice_map["alloy"].temperature == 0.8
+    assert settings.tts_voice_map["alloy"].top_p == 0.95
+    assert settings.tts_voice_map["alloy"].target_db == -20.0
+    assert settings.tts_voice_map["alloy"].max_sentences_per_chunk == 2
 
 
 def test_settings_voice_map_loaded_from_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

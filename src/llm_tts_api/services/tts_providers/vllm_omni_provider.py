@@ -11,7 +11,11 @@ import soundfile as sf
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
 from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
-from llm_tts_api.services.tts_providers.voice_args import build_clone_voice_args, build_named_voice_args
+from llm_tts_api.services.tts_providers.voice_args import (
+    VoiceArgsSelection,
+    build_generation_args,
+    select_voice_args,
+)
 
 
 class VllmOmniTTSProvider(CachedModelProvider):
@@ -76,22 +80,26 @@ class VllmOmniTTSProvider(CachedModelProvider):
         }
 
     @staticmethod
-    def _build_voice_kwargs(request: SynthesisRequest, params: set[str]) -> tuple[dict[str, str], dict[str, str], bool]:
-        selected_named_voice_args = build_named_voice_args(
+    def _build_voice_selection(request: SynthesisRequest, params: set[str]) -> VoiceArgsSelection:
+        return select_voice_args(
             voice_name=request.voice_name,
-            available_params=params,
-        )
-        selected_clone_args = build_clone_voice_args(
             ref_audio_path=request.voice.ref_audio_path,
             ref_text=request.voice.ref_text,
             available_params=params,
+            prefer_clone=True,
+            require_any=False,
         )
 
-        if selected_named_voice_args:
-            return selected_named_voice_args, selected_clone_args, True
-        if selected_clone_args:
-            return selected_clone_args, selected_clone_args, False
-        return {}, {}, False
+    @staticmethod
+    def _generation_args(request: SynthesisRequest, params: set[str]) -> dict[str, Any]:
+        if request.generation is None:
+            return {}
+        return build_generation_args(
+            language=request.generation.language,
+            temperature=request.generation.temperature,
+            top_p=request.generation.top_p,
+            available_params=params,
+        )
 
     @staticmethod
     def _generate(model: object, kwargs: dict[str, str]) -> Any:
@@ -143,17 +151,25 @@ class VllmOmniTTSProvider(CachedModelProvider):
 
         with model_lock:
             params = self._signature_params(model)
-            voice_kwargs, clone_kwargs, used_voice_name = self._build_voice_kwargs(request, params)
+            voice_selection = self._build_voice_selection(request, params)
+            generation_args = self._generation_args(request, params)
 
             for chunk in request.chunks:
-                kwargs: dict[str, str] = {"text": chunk, **voice_kwargs}
+                synthesis_args: dict[str, Any] = {
+                    "text": chunk,
+                    **voice_selection.primary_args,
+                    **generation_args,
+                }
                 try:
-                    results = self._generate(model, kwargs)
+                    results = self._generate(model, synthesis_args)
                 except AssertionError as exc:
-                    if used_voice_name and clone_kwargs:
-                        results = self._generate(model, {"text": chunk, **clone_kwargs})
-                    elif used_voice_name:
-                        results = self._generate(model, {"text": chunk})
+                    if voice_selection.used_named_voice and voice_selection.clone_fallback_args:
+                        results = self._generate(
+                            model,
+                            {"text": chunk, **voice_selection.clone_fallback_args, **generation_args},
+                        )
+                    elif voice_selection.used_named_voice:
+                        results = self._generate(model, {"text": chunk, **generation_args})
                     else:
                         raise invalid_request(str(exc), param="voice") from exc
 

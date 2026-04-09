@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from llm_tts_api.config import VoiceConfig
 from llm_tts_api.errors import OpenAIHTTPException
-from llm_tts_api.services.tts_providers.base import SynthesisRequest
+from llm_tts_api.services.tts_providers.base import GenerationOptions, SynthesisRequest
 from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSProvider
 
 
@@ -20,35 +20,36 @@ def _request(*, voice_name: str = "gold", ref_audio_path: str = "/tmp/gold.wav")
         chunks=["hello"],
         voice=VoiceConfig(ref_audio_path=ref_audio_path, ref_text="reference text", language="Italian"),
         voice_name=voice_name,
+        generation=GenerationOptions(language="Italian", temperature=0.8, top_p=0.95),
     )
 
 
 def test_build_voice_kwargs_prefers_clone_over_voice_name() -> None:
     request = _request()
 
-    kwargs, used_voice_name = MLXAudioTTSProvider._build_voice_kwargs(
+    selection = MLXAudioTTSProvider._build_voice_selection(
         request,
         {"text", "voice", "ref_audio", "ref_text"},
     )
 
-    assert kwargs == {"ref_audio": "/tmp/gold.wav", "ref_text": "reference text"}
-    assert used_voice_name is False
+    assert selection.primary_args == {"ref_audio": "/tmp/gold.wav", "ref_text": "reference text"}
+    assert selection.used_named_voice is False
 
 
 def test_build_voice_kwargs_falls_back_to_voice_name_when_clone_params_missing() -> None:
     request = _request()
 
-    kwargs, used_voice_name = MLXAudioTTSProvider._build_voice_kwargs(request, {"text", "voice"})
+    selection = MLXAudioTTSProvider._build_voice_selection(request, {"text", "voice"})
 
-    assert kwargs == {"voice": "gold"}
-    assert used_voice_name is True
+    assert selection.primary_args == {"voice": "gold"}
+    assert selection.used_named_voice is True
 
 
 def test_build_voice_kwargs_rejects_when_no_clone_and_no_named_voice() -> None:
     request = _request(voice_name="", ref_audio_path="")
 
     try:
-        MLXAudioTTSProvider._build_voice_kwargs(request, {"text"})
+        MLXAudioTTSProvider._build_voice_selection(request, {"text"})
         assert False, "expected exception"
     except OpenAIHTTPException as exc:
         assert exc.status_code == 400
@@ -60,8 +61,23 @@ def test_synthesize_chunks_uses_clone_kwargs_even_when_voice_name_present() -> N
     captured: list[dict[str, str]] = []
 
     class _FakeModel:
-        def generate(self, text: str, ref_audio: str, ref_text: str):
-            kwargs = {"text": text, "ref_audio": ref_audio, "ref_text": ref_text}
+        def generate(
+            self,
+            text: str,
+            ref_audio: str,
+            ref_text: str,
+            temperature: float,
+            top_p: float,
+            language: str,
+        ):
+            kwargs = {
+                "text": text,
+                "ref_audio": ref_audio,
+                "ref_text": ref_text,
+                "temperature": temperature,
+                "top_p": top_p,
+                "language": language,
+            }
             captured.append(kwargs)
             return [_FakeResult(audio=[0.0, 0.0, 0.0], sample_rate=16000)]
 
@@ -71,6 +87,15 @@ def test_synthesize_chunks_uses_clone_kwargs_even_when_voice_name_present() -> N
 
     assert len(wavs) == 1
     assert wavs[0][:4] == b"RIFF"
-    assert captured == [{"text": "hello", "ref_audio": "/tmp/gold.wav", "ref_text": "reference text"}]
+    assert captured == [
+        {
+            "text": "hello",
+            "ref_audio": "/tmp/gold.wav",
+            "ref_text": "reference text",
+            "temperature": 0.8,
+            "top_p": 0.95,
+            "language": "Italian",
+        }
+    ]
 
 

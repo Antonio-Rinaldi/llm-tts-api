@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import inspect
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -8,6 +10,7 @@ import soundfile as sf
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
 from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
+from llm_tts_api.services.tts_providers.voice_args import build_generation_args
 
 
 class VoxtralTTSProvider(CachedModelProvider):
@@ -33,17 +36,36 @@ class VoxtralTTSProvider(CachedModelProvider):
 
 
     @staticmethod
-    def _build_generate_kwargs(request: SynthesisRequest, chunk: str) -> dict[str, str]:
+    def _signature_params(model: object) -> set[str]:
+        try:
+            return set(inspect.signature(model.generate).parameters.keys())
+        except Exception:  # noqa: BLE001
+            return {"text", "ref_audio", "ref_text"}
+
+    @staticmethod
+    def _build_generate_kwargs(request: SynthesisRequest, chunk: str, params: set[str]) -> dict[str, Any]:
         if not request.voice.ref_audio_path:
             raise invalid_request(
                 "Voxtral provider requires voice cloning references (ref_audio_path/ref_text)",
                 param="voice",
             )
 
+        generation_args = (
+            build_generation_args(
+                language=request.generation.language,
+                temperature=request.generation.temperature,
+                top_p=request.generation.top_p,
+                available_params=params,
+            )
+            if request.generation is not None
+            else {}
+        )
+
         return {
             "text": chunk,
             "ref_audio": request.voice.ref_audio_path,
             "ref_text": request.voice.ref_text,
+            **generation_args,
         }
 
     def synthesize_chunks(self, request: SynthesisRequest) -> list[bytes]:
@@ -52,8 +74,9 @@ class VoxtralTTSProvider(CachedModelProvider):
         output: list[bytes] = []
 
         with model_lock:
+            params = self._signature_params(model)
             for chunk in request.chunks:
-                kwargs = self._build_generate_kwargs(request, chunk)
+                kwargs = self._build_generate_kwargs(request, chunk, params)
                 for result in model.generate(**kwargs):
                     buf = io.BytesIO()
                     sf.write(buf, np.asarray(result.audio), int(result.sample_rate), format="WAV")
