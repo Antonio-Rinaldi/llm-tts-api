@@ -151,6 +151,11 @@ llm-tts-api
 
 ## Configuration
 
+### Docker default
+
+- The provided `Dockerfile` sets `TTS_VOICE_MAP_FILE=/app/config/voice_map.container.json`.
+- That map points to bundled references under `/app/voices` (`alloy`, `gold`) so the image starts with a valid voice configuration.
+
 ### App
 
 - `APP_NAME` (default: `llm-tts-api`)

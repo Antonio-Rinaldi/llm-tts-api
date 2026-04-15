@@ -1,4 +1,7 @@
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+
+from llm_tts_api import dependencies
 
 router = APIRouter(tags=["health"])
 
@@ -10,6 +13,10 @@ def health() -> dict:
 
 
 @router.get("/ready")
-def ready() -> dict:
+def ready() -> JSONResponse:
     """Readiness probe used by orchestrators after startup."""
-    return {"status": "ready"}
+    try:
+        dependencies.get_tts_service()
+        return JSONResponse(status_code=200, content={"status": "ready"})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=503, content={"status": "degraded", "detail": str(exc)})

@@ -1,0 +1,23 @@
+{
+  "alloy": {
+    "ref_audio_path": "/app/voices/alloy.wav",
+    "ref_text": "Ciao, questa e una voce di riferimento.",
+    "language": "Italian",
+    "number_lang": "it",
+    "temperature": 0.8,
+    "top_p": 0.95,
+    "target_db": -20.0,
+    "max_sentences_per_chunk": 2
+  },
+  "gold": {
+    "ref_audio_path": "/app/voices/gold.wav",
+    "ref_text": "Questa e la voce gold per i test in container.",
+    "language": "Italian",
+    "number_lang": "it",
+    "temperature": 0.8,
+    "top_p": 0.95,
+    "target_db": -20.0,
+    "max_sentences_per_chunk": 2
+  }
+}
+
