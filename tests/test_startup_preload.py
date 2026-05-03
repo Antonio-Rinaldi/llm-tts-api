@@ -31,7 +31,6 @@ def test_startup_fails_fast_when_preload_fails(monkeypatch) -> None:
     monkeypatch.setattr(dependencies, "get_tts_service", _failing_get_tts_service)
 
     app = create_app()
-    with pytest.raises(RuntimeError, match="preload failed"):
-        with TestClient(app):
-            pass
+    with pytest.raises(RuntimeError, match="preload failed"), TestClient(app):
+        pass
 

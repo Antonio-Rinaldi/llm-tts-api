@@ -14,7 +14,7 @@ class OpenAIError:
     code: str
     param: str | None = None
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, object]:
         """Serialize to the OpenAI-compatible API envelope."""
         return {
             "error": {
@@ -34,7 +34,9 @@ class OpenAIHTTPException(HTTPException):
         super().__init__(status_code=status_code, detail=error.as_dict()["error"])
 
 
-def invalid_request(message: str, param: str | None = None, code: str = "invalid_parameter") -> OpenAIHTTPException:
+def invalid_request(
+    message: str, param: str | None = None, code: str = "invalid_parameter"
+) -> OpenAIHTTPException:
     """Create a standardized 400 invalid request error."""
     return OpenAIHTTPException(
         status_code=400,

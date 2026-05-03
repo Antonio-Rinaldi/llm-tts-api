@@ -4,9 +4,9 @@ import re
 from datetime import date
 
 try:
-    from num2words import num2words
+    from num2words import num2words  # type: ignore[import-untyped]
 except Exception:  # pragma: no cover - validated by dependency management
-    num2words = None  # type: ignore[assignment]
+    num2words = None
 
 _PUNCT_SPACING_RE = re.compile(r"\s+")
 _DUPLICATE_DOTS_RE = re.compile(r"\.{2,}")
@@ -128,7 +128,9 @@ def preprocess_for_tts(text: str, language: str) -> str:
 
 def _paragraph_sentences(paragraph: str) -> list[str]:
     """Split one paragraph into non-empty sentences."""
-    return [sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(paragraph) if sentence.strip()]
+    return [
+        sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(paragraph) if sentence.strip()
+    ]
 
 
 def split_text_semantic(text: str, max_chars: int, max_sentences_per_chunk: int = 2) -> list[str]:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import io
 import inspect
+import io
 from typing import Any
 
 import numpy as np
-import soundfile as sf
+import soundfile as sf  # type: ignore[import-untyped]
 
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
@@ -22,10 +22,10 @@ class MLXAudioTTSProvider(CachedModelProvider):
 
     provider_name = "mlx_audio"
 
-    def _load_model(self, model_name: str):
+    def _load_model(self, model_name: str) -> Any:
         """Load and return an ``mlx_audio`` TTS model instance."""
         try:
-            import mlx_audio.tts.utils as mlx_audio_model
+            import mlx_audio.tts.utils as mlx_audio_model  # type: ignore[import-untyped]
         except Exception as exc:  # noqa: BLE001
             raise invalid_request(
                 "Provider 'mlx_audio' requires the optional dependency 'mlx-audio'",
@@ -43,7 +43,7 @@ class MLXAudioTTSProvider(CachedModelProvider):
 
 
     @staticmethod
-    def _signature_params(model: object) -> set[str]:
+    def _signature_params(model: Any) -> set[str]:
         """Inspect supported generate parameters, with safe fallback defaults."""
         try:
             return set(inspect.signature(model.generate).parameters.keys())

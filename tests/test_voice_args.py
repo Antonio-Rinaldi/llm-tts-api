@@ -21,7 +21,9 @@ def test_build_named_voice_args_returns_empty_without_supported_param() -> None:
 
 
 def test_build_clone_voice_args_supports_reference_aliases() -> None:
-    out = build_clone_voice_args("/tmp/gold.wav", "hello", {"text", "reference_audio", "reference_text"})
+    out = build_clone_voice_args(
+        "/tmp/gold.wav", "hello", {"text", "reference_audio", "reference_text"}
+    )
 
     assert out == {"reference_audio": "/tmp/gold.wav", "reference_text": "hello"}
 

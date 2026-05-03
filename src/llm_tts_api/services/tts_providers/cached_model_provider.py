@@ -26,7 +26,7 @@ class CachedModelProvider:
         """Load a model instance from the concrete provider implementation."""
         raise NotImplementedError
 
-    def _get_model(self, model_name: str):
+    def _get_model(self, model_name: str) -> Any:
         """Return a cached model or load/store it atomically on first access."""
         with self._cache_lock:
             cached_model = self._model_cache.get(model_name)

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import io
 import wave
+from typing import Any
 
 import numpy as np
 
+_SAMPLE_WIDTH_DTYPES: dict[int, Any] = {2: np.int16, 4: np.int32}
 
-def _dtype_for_width(sample_width: int) -> np.dtype[np.signedinteger] | None:
+
+def _dtype_for_width(sample_width: int) -> Any:
     """Map WAV sample width to the corresponding signed integer dtype."""
-    return {2: np.int16, 4: np.int32}.get(sample_width)
+    return _SAMPLE_WIDTH_DTYPES.get(sample_width)
 
 
 def normalize_wav_rms(wav_bytes: bytes, target_db: float) -> bytes:

@@ -2,12 +2,15 @@ import json
 import wave
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from llm_tts_api.errors import invalid_request
 
 
-def _build_client_with_voice(monkeypatch, tmp_path: Path, extra_env: dict[str, str] | None = None) -> TestClient:
+def _build_client_with_voice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra_env: dict[str, str] | None = None
+) -> TestClient:
     voice_ref = tmp_path / "alloy.wav"
     voice_ref.write_bytes(b"fake-wav")
 
@@ -111,7 +114,12 @@ def test_speech_mlx_audio_requires_dependency(monkeypatch, tmp_path: Path) -> No
 
     response = client.post(
         "/v1/audio/speech",
-        json={"model": "voxtral/mini-tts", "provider": "mlx_audio", "voice": "alloy", "input": "hello"},
+        json={
+            "model": "voxtral/mini-tts",
+            "provider": "mlx_audio",
+            "voice": "alloy",
+            "input": "hello",
+        },
     )
 
     assert response.status_code == 400
@@ -148,7 +156,12 @@ def test_speech_forwards_clone_voice_config_to_mlx_provider(monkeypatch, tmp_pat
 
     response = client.post(
         "/v1/audio/speech",
-        json={"model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base", "provider": "mlx_audio", "voice": "alloy", "input": "hello"},
+        json={
+            "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+            "provider": "mlx_audio",
+            "voice": "alloy",
+            "input": "hello",
+        },
     )
 
     assert response.status_code == 200

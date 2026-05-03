@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -19,26 +19,26 @@ def _raise_not_implemented(endpoint: str) -> None:
     raise not_implemented(f"Endpoint '{endpoint}' is not implemented yet")
 
 
-@router.post("/speech")
+@router.post("/speech", response_model=None)
 def create_speech(
     req: SpeechRequest,
     tts_service: TTSDependency,
     stream: bool = Query(False, description="If true, stream audio from memory instead of file"),
-) -> FileResponse:
+) -> FileResponse | StreamingResponse:
     """Generate speech audio from text using the configured TTS pipeline."""
     return tts_service.create_speech(req, stream=stream)
 
 
-@router.post("/transcriptions")
-def create_transcription(stt_service: STTDependency):
+@router.post("/transcriptions", response_model=None)
+def create_transcription(stt_service: STTDependency) -> NoReturn:
     """Placeholder endpoint for speech-to-text transcription."""
-    return stt_service.create_transcription()
+    stt_service.create_transcription()
 
 
-@router.post("/translations")
-def create_translation(stt_service: STTDependency):
+@router.post("/translations", response_model=None)
+def create_translation(stt_service: STTDependency) -> NoReturn:
     """Placeholder endpoint for speech translation."""
-    return stt_service.create_translation()
+    stt_service.create_translation()
 
 
 @router.post("/voices")

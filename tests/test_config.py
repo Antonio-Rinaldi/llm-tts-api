@@ -62,7 +62,9 @@ def test_settings_voice_map_parsed(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert settings.tts_voice_map["alloy"].max_sentences_per_chunk == 2
 
 
-def test_settings_voice_map_loaded_from_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_settings_voice_map_loaded_from_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from llm_tts_api.config import Settings
 
     voice_map_file = _write_voice_map(tmp_path)
@@ -107,7 +109,9 @@ def test_settings_provider_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     assert settings.tts_provider == "mlx_audio"
 
 
-def test_settings_voxtral_provider_specific_model_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_settings_voxtral_provider_specific_model_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from llm_tts_api.config import Settings
 
     monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
@@ -128,7 +132,9 @@ def test_settings_voxtral_provider_specific_model_env(monkeypatch: pytest.Monkey
     ]
 
 
-def test_settings_vllm_omni_provider_specific_model_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_settings_vllm_omni_provider_specific_model_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from llm_tts_api.config import Settings
 
     monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))

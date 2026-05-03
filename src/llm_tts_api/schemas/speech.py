@@ -12,3 +12,4 @@ class SpeechRequest(BaseModel):
     instructions: str | None = None
     speed: float | None = None
     stream_format: str | None = None
+    normalize_db: float | None = None

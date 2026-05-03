@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import importlib
-import io
 import inspect
+import io
 from typing import Any
 
 import numpy as np
-import soundfile as sf
+import soundfile as sf  # type: ignore[import-untyped]
 
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
@@ -49,7 +49,7 @@ class VllmOmniTTSProvider(CachedModelProvider):
             param="provider",
         ) from last_exc
 
-    def _load_model(self, model_name: str):
+    def _load_model(self, model_name: str) -> Any:
         """Load and return a vllm-omni model instance."""
         try:
             loader = self._resolve_loader()

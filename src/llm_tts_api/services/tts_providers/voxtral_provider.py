@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import io
 import inspect
+import io
 from typing import Any
 
 import numpy as np
-import soundfile as sf
+import soundfile as sf  # type: ignore[import-untyped]
 
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
@@ -18,10 +18,10 @@ class VoxtralTTSProvider(CachedModelProvider):
 
     provider_name = "voxtral"
 
-    def _load_model(self, model_name: str):
+    def _load_model(self, model_name: str) -> Any:
         """Load and return a Voxtral model through mlx-audio."""
         try:
-            import mlx_audio.tts.utils as mlx_audio_model
+            import mlx_audio.tts.utils as mlx_audio_model  # type: ignore[import-untyped]
         except Exception as exc:  # noqa: BLE001
             raise invalid_request(
                 "Provider 'voxtral' requires the optional dependency 'mlx-audio'",
@@ -39,7 +39,7 @@ class VoxtralTTSProvider(CachedModelProvider):
 
 
     @staticmethod
-    def _signature_params(model: object) -> set[str]:
+    def _signature_params(model: Any) -> set[str]:
         """Inspect supported generation parameters with safe defaults."""
         try:
             return set(inspect.signature(model.generate).parameters.keys())
@@ -47,7 +47,9 @@ class VoxtralTTSProvider(CachedModelProvider):
             return {"text", "ref_audio", "ref_text"}
 
     @staticmethod
-    def _build_generate_kwargs(request: SynthesisRequest, chunk: str, params: set[str]) -> dict[str, Any]:
+    def _build_generate_kwargs(
+        request: SynthesisRequest, chunk: str, params: set[str]
+    ) -> dict[str, Any]:
         """Build synthesis args and enforce cloning-only policy for Voxtral provider."""
         if not request.voice.ref_audio_path:
             raise invalid_request(

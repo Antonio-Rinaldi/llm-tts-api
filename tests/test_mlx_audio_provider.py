@@ -14,11 +14,15 @@ class _FakeResult:
     sample_rate: int
 
 
-def _request(*, voice_name: str = "gold", ref_audio_path: str = "/tmp/gold.wav") -> SynthesisRequest:
+def _request(
+    *, voice_name: str = "gold", ref_audio_path: str = "/tmp/gold.wav"
+) -> SynthesisRequest:
     return SynthesisRequest(
         model_name="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
         chunks=["hello"],
-        voice=VoiceConfig(ref_audio_path=ref_audio_path, ref_text="reference text", language="Italian"),
+        voice=VoiceConfig(
+            ref_audio_path=ref_audio_path, ref_text="reference text", language="Italian"
+        ),
         voice_name=voice_name,
         generation=GenerationOptions(language="Italian", temperature=0.8, top_p=0.95),
     )
@@ -50,7 +54,7 @@ def test_build_voice_kwargs_rejects_when_no_clone_and_no_named_voice() -> None:
 
     try:
         MLXAudioTTSProvider._build_voice_selection(request, {"text"})
-        assert False, "expected exception"
+        raise AssertionError("expected exception")
     except OpenAIHTTPException as exc:
         assert exc.status_code == 400
         assert exc.detail["param"] == "voice"

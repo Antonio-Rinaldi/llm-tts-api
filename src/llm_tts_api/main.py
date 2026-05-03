@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from starlette.requests import Request
 
 from llm_tts_api import dependencies
 from llm_tts_api.app_logging import setup_logging
@@ -46,7 +48,7 @@ def create_app() -> FastAPI:
     setup_logging(os.getenv("APP_LOG_LEVEL", "INFO"))
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         """Warm startup dependencies and fail early if preload breaks."""
         dependencies.get_tts_service()
         yield
@@ -54,7 +56,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="llm-tts-api", lifespan=lifespan)
 
     @app.exception_handler(OpenAIHTTPException)
-    async def openai_exception_handler(_, exc: OpenAIHTTPException) -> JSONResponse:
+    async def openai_exception_handler(_: Request, exc: OpenAIHTTPException) -> JSONResponse:
         """Return OpenAI-compatible error envelopes."""
         return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
 

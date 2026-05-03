@@ -40,7 +40,9 @@ def build_named_voice_args(voice_name: str, available_params: set[str]) -> dict[
     return {voice_param_name: voice_name}
 
 
-def build_clone_voice_args(ref_audio_path: str, ref_text: str, available_params: set[str]) -> dict[str, str]:
+def build_clone_voice_args(
+    ref_audio_path: str, ref_text: str, available_params: set[str]
+) -> dict[str, str]:
     """Build args for reference-audio voice cloning when supported."""
     if not ref_audio_path:
         return {}

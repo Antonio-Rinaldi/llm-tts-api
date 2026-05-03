@@ -15,7 +15,7 @@ class GenerationOptions:
     top_p: float
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class SynthesisRequest:
     """Normalized request passed from service layer to a provider strategy."""
 

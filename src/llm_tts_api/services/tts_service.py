@@ -20,6 +20,8 @@ from llm_tts_api.services.audio_postprocessing import normalize_wav_rms
 from llm_tts_api.services.model_registry import ModelRegistry
 from llm_tts_api.services.text_preprocessing import (
     preprocess_for_tts,
+)
+from llm_tts_api.services.text_preprocessing import (
     split_text_semantic as split_text_semantic_pipeline,
 )
 from llm_tts_api.services.tts_providers.base import GenerationOptions, SynthesisRequest
@@ -38,6 +40,7 @@ class ResolvedSpeechRequest:
     voice: VoiceConfig
     response_format: str
     chunks: list[str]
+    normalize_db: float
 
 
 def split_text_semantic(text: str, max_chars: int) -> list[str]:
@@ -111,6 +114,7 @@ class SpeechRequestResolver:
         voice = self._resolve_voice(request.voice)
         response_format = self._resolve_response_format(request.response_format)
         chunks = self._prepare_chunks(request.input, voice)
+        normalize_db = request.normalize_db if request.normalize_db is not None else voice.target_db
         return ResolvedSpeechRequest(
             model_name=model_name,
             provider=provider,
@@ -118,6 +122,7 @@ class SpeechRequestResolver:
             voice=voice,
             response_format=response_format,
             chunks=chunks,
+            normalize_db=normalize_db,
         )
 
     @staticmethod
@@ -179,7 +184,9 @@ class SpeechRequestResolver:
 class SpeechSynthesizer:
     """Generate normalized WAV output from a resolved request."""
 
-    def __init__(self, provider_registry: TTSProviderRegistry, max_concurrent_requests: int) -> None:
+    def __init__(
+        self, provider_registry: TTSProviderRegistry, max_concurrent_requests: int
+    ) -> None:
         """Create a synthesis engine with bounded in-process concurrency."""
         self._provider_registry = provider_registry
         self._synthesis_semaphore = threading.Semaphore(max_concurrent_requests)
@@ -203,7 +210,7 @@ class SpeechSynthesizer:
                 )
             )
         normalized_chunks = [
-            normalize_wav_rms(chunk_wav, target_db=resolved.voice.target_db)
+            normalize_wav_rms(chunk_wav, target_db=resolved.normalize_db)
             for chunk_wav in chunk_wavs
         ]
         return _concat_wav_bytes(normalized_chunks)
@@ -237,18 +244,18 @@ class SpeechResponseFactory:
 class TTSService:
     """Facade orchestrating request validation, synthesis, and HTTP response creation."""
 
-    def __init__(self, settings: Settings, model_registry: ModelRegistry, provider_registry: TTSProviderRegistry) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        model_registry: ModelRegistry,
+        provider_registry: TTSProviderRegistry,
+    ) -> None:
         """Build and wire all internal speech pipeline components."""
         self.settings = settings
-        max_inflight_raw = os.getenv("TTS_MAX_CONCURRENT_REQUESTS", "1").strip()
-        try:
-            max_concurrency = max(1, int(max_inflight_raw))
-        except ValueError as exc:
-            raise ValueError("TTS_MAX_CONCURRENT_REQUESTS must be an integer >= 1") from exc
         self._resolver = SpeechRequestResolver(settings=settings, model_registry=model_registry)
         self._synthesizer = SpeechSynthesizer(
             provider_registry=provider_registry,
-            max_concurrent_requests=max_concurrency,
+            max_concurrent_requests=settings.tts_max_concurrent_requests,
         )
         self._response_factory = SpeechResponseFactory()
 
@@ -259,7 +266,9 @@ class TTSService:
         if callable(preload_model):
             preload_model(settings.tts_model_default_for_provider(default_provider))
 
-    def create_speech(self, request: SpeechRequest, stream: bool = False) -> FileResponse | StreamingResponse:
+    def create_speech(
+        self, request: SpeechRequest, stream: bool = False
+    ) -> FileResponse | StreamingResponse:
         """Create speech for one request and return a stream or file response.
 
         Args:

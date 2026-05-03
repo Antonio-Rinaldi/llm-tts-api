@@ -58,6 +58,7 @@ class Settings:
 
     tts_voice_map: dict[str, VoiceConfig] = field(default_factory=dict)
     tts_max_input_chars: int = 4096
+    tts_max_concurrent_requests: int = 1
 
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
@@ -85,21 +86,31 @@ class Settings:
         if self.tts_provider not in {"mlx_audio", "voxtral", "vllm-omni"}:
             raise ValueError("TTS_PROVIDER must be one of 'mlx_audio', 'voxtral', or 'vllm-omni'")
 
-        self.tts_mlx_audio_model_default, self.tts_mlx_audio_model_allowed = self._load_provider_model_list(
+        mlx_default, mlx_allowed = self._load_provider_model_list(
             default_env="TTS_MLX_AUDIO_MODEL_DEFAULT",
             allowed_env="TTS_MLX_AUDIO_MODEL_ALLOWED",
             fallback_default=self.tts_mlx_audio_model_default,
         )
-        self.tts_voxtral_model_default, self.tts_voxtral_model_allowed = self._load_provider_model_list(
+        self.tts_mlx_audio_model_default = mlx_default
+        self.tts_mlx_audio_model_allowed = mlx_allowed
+
+        voxtral_default, voxtral_allowed = self._load_provider_model_list(
             default_env="TTS_VOXTRAL_MODEL_DEFAULT",
             allowed_env="TTS_VOXTRAL_MODEL_ALLOWED",
             fallback_default=self.tts_voxtral_model_default,
         )
-        self.tts_vllm_omni_model_default, self.tts_vllm_omni_model_allowed = self._load_provider_model_list(
+        self.tts_voxtral_model_default, self.tts_voxtral_model_allowed = (
+            voxtral_default,
+            voxtral_allowed,
+        )
+
+        vllm_default, vllm_allowed = self._load_provider_model_list(
             default_env="TTS_VLLM_OMNI_MODEL_DEFAULT",
             allowed_env="TTS_VLLM_OMNI_MODEL_ALLOWED",
             fallback_default=self.tts_vllm_omni_model_default,
         )
+        self.tts_vllm_omni_model_default = vllm_default
+        self.tts_vllm_omni_model_allowed = vllm_allowed
 
         self.tts_model_default = self.tts_model_default_for_provider(self.tts_provider)
         self.tts_model_allowed = self.tts_model_allowed_for_provider(self.tts_provider)
@@ -115,17 +126,21 @@ class Settings:
         model_default = os.getenv(default_env, fallback_default).strip()
         raw_allowed = os.getenv(allowed_env, "").strip()
         allowed_models = self._split_csv(raw_allowed) if raw_allowed else [model_default]
-        normalized_allowed = allowed_models if model_default in allowed_models else [model_default, *allowed_models]
+        normalized_allowed = (
+            allowed_models if model_default in allowed_models else [model_default, *allowed_models]
+        )
         return model_default, normalized_allowed
 
     def _load_stt_models(self) -> None:
         """Resolve STT model default and allowed list."""
         self.stt_model_default = os.getenv("STT_MODEL_DEFAULT", self.stt_model_default)
         stt_allowed = os.getenv("STT_MODEL_ALLOWED", "").strip()
-        self.stt_model_allowed = self._split_csv(stt_allowed) if stt_allowed else [self.stt_model_default]
+        self.stt_model_allowed = (
+            self._split_csv(stt_allowed) if stt_allowed else [self.stt_model_default]
+        )
 
     def _load_tts_limits(self) -> None:
-        """Validate TTS input size limits."""
+        """Validate TTS input size limits and concurrency cap."""
         max_chars_raw = os.getenv("TTS_MAX_INPUT_CHARS", str(self.tts_max_input_chars)).strip()
         try:
             self.tts_max_input_chars = int(max_chars_raw)
@@ -133,6 +148,12 @@ class Settings:
             raise ValueError("TTS_MAX_INPUT_CHARS must be an integer") from exc
         if self.tts_max_input_chars < 256:
             raise ValueError("TTS_MAX_INPUT_CHARS must be >= 256")
+
+        max_req_raw = os.getenv("TTS_MAX_CONCURRENT_REQUESTS", "1").strip()
+        try:
+            self.tts_max_concurrent_requests = max(1, int(max_req_raw))
+        except ValueError as exc:
+            raise ValueError("TTS_MAX_CONCURRENT_REQUESTS must be an integer >= 1") from exc
 
     def _load_voice_map_from_file(self) -> dict[str, VoiceConfig]:
         """Load and validate all configured voices from ``TTS_VOICE_MAP_FILE``."""

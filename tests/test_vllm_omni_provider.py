@@ -8,7 +8,9 @@ from llm_tts_api.services.tts_providers.base import SynthesisRequest
 from llm_tts_api.services.tts_providers.vllm_omni_provider import VllmOmniTTSProvider
 
 
-def _request(*, voice_name: str = "", ref_audio_path: str = "", ref_text: str = "") -> SynthesisRequest:
+def _request(
+    *, voice_name: str = "", ref_audio_path: str = "", ref_text: str = ""
+) -> SynthesisRequest:
     return SynthesisRequest(
         model_name="vllm-omni/default-tts",
         chunks=["hello"],
@@ -23,7 +25,9 @@ def test_resolve_loader_rejects_missing_dependency(monkeypatch: pytest.MonkeyPat
     def _missing(_module_name: str):
         raise ModuleNotFoundError("missing")
 
-    monkeypatch.setattr("llm_tts_api.services.tts_providers.vllm_omni_provider.importlib.import_module", _missing)
+    monkeypatch.setattr(
+        "llm_tts_api.services.tts_providers.vllm_omni_provider.importlib.import_module", _missing
+    )
 
     with pytest.raises(OpenAIHTTPException) as exc_info:
         provider._resolve_loader()

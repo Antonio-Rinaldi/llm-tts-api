@@ -7,7 +7,7 @@ from llm_tts_api.services.model_registry import ModelRegistry
 def test_provider_defaults_to_configured_mlx_audio(monkeypatch, tmp_path: Path) -> None:
     voice_map_file = tmp_path / "voice_map.json"
     voice_map_file.write_text(
-        '{"alloy": {"ref_audio_path": "/tmp/alloy.wav", "ref_text": "hello", "language": "Italian"}}',
+        '{"alloy": {"ref_audio_path": "/tmp/alloy.wav", "ref_text": "hi", "language": "Italian"}}',
         encoding="utf-8",
     )
     monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(voice_map_file))
@@ -24,7 +24,7 @@ def test_provider_defaults_to_configured_mlx_audio(monkeypatch, tmp_path: Path) 
 def test_provider_explicit_override(monkeypatch, tmp_path: Path) -> None:
     voice_map_file = tmp_path / "voice_map.json"
     voice_map_file.write_text(
-        '{"alloy": {"ref_audio_path": "/tmp/alloy.wav", "ref_text": "hello", "language": "Italian"}}',
+        '{"alloy": {"ref_audio_path": "/tmp/alloy.wav", "ref_text": "hi", "language": "Italian"}}',
         encoding="utf-8",
     )
     monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(voice_map_file))
@@ -39,7 +39,7 @@ def test_provider_explicit_override(monkeypatch, tmp_path: Path) -> None:
 def test_provider_specific_default_model_when_model_missing(monkeypatch, tmp_path: Path) -> None:
     voice_map_file = tmp_path / "voice_map.json"
     voice_map_file.write_text(
-        '{"alloy": {"ref_audio_path": "/tmp/alloy.wav", "ref_text": "hello", "language": "Italian"}}',
+        '{"alloy": {"ref_audio_path": "/tmp/alloy.wav", "ref_text": "hi", "language": "Italian"}}',
         encoding="utf-8",
     )
     monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(voice_map_file))
@@ -56,7 +56,7 @@ def test_provider_specific_default_model_when_model_missing(monkeypatch, tmp_pat
 def test_provider_specific_default_model_for_vllm_omni(monkeypatch, tmp_path: Path) -> None:
     voice_map_file = tmp_path / "voice_map.json"
     voice_map_file.write_text(
-        '{"alloy": {"ref_audio_path": "/tmp/alloy.wav", "ref_text": "hello", "language": "Italian"}}',
+        '{"alloy": {"ref_audio_path": "/tmp/alloy.wav", "ref_text": "hi", "language": "Italian"}}',
         encoding="utf-8",
     )
     monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(voice_map_file))

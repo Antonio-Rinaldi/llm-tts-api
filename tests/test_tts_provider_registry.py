@@ -25,7 +25,7 @@ def test_registry_rejects_unknown_provider() -> None:
 
     try:
         registry.get("unknown")
-        assert False, "expected exception"
+        raise AssertionError("expected exception")
     except OpenAIHTTPException as exc:
         assert exc.status_code == 400
 
