@@ -1,0 +1,536 @@
+openapi: 3.1.0
+info:
+  title: llm-tts-api
+  version: 0.1.0
+  summary: OpenAI-compatible local audio API with pluggable TTS providers (MLX-Audio, Voxtral, vLLM-Omni).
+  description: |
+    Single-process FastAPI service exposing an OpenAI-compatible audio surface.
+    Today only the speech-synthesis path (`POST /v1/audio/speech`) is fully
+    implemented; transcription/translation, chat completions, and realtime
+    endpoints are URL-stable placeholders that return `501 not_implemented`
+    so OpenAI SDK clients can probe the surface without surprise.
+
+    See `docs/openapi/audio/` for per-endpoint markdown notes derived from the
+    original OpenAI spec, and `examples.http` for runnable example requests.
+
+    All error responses use the OpenAI error envelope:
+    `{"error": {"message", "type", "param", "code"}}`.
+  license:
+    name: MIT
+servers:
+  - url: http://127.0.0.1:8000
+    description: Local default bind (loopback).
+tags:
+  - name: health
+    description: Liveness & readiness probes.
+  - name: models
+    description: OpenAI-compatible model catalog.
+  - name: audio
+    description: Speech / transcription / translation / voice-consent endpoints.
+  - name: chat
+    description: OpenAI-compatible chat completions (not implemented in this version).
+  - name: realtime
+    description: OpenAI-compatible realtime session/call endpoints (not implemented).
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Liveness probe — always 200 once the process is up.
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+              example: { status: ok }
+
+  /ready:
+    get:
+      tags: [health]
+      operationId: getReady
+      summary: Readiness probe — 200 when TTS service resolves, 503 with degraded detail otherwise.
+      responses:
+        '200':
+          description: TTS service is reachable and dependencies satisfied.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ready] }
+              example: { status: ready }
+        '503':
+          description: One or more dependencies are not yet ready (e.g. TTS service preload failed).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, detail]
+                properties:
+                  status: { type: string, enum: [degraded] }
+                  detail: { type: string, description: Free-form reason. }
+              example: { status: degraded, detail: 'tts unavailable' }
+
+  /v1/models:
+    get:
+      tags: [models]
+      operationId: listModels
+      summary: List models visible to this API instance (OpenAI-compatible).
+      description: |
+        Returns the union of allowed model ids across all configured providers
+        as `ModelObject` entries. Shape matches OpenAI's `GET /v1/models`.
+      responses:
+        '200':
+          description: Model catalog.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelListResponse' }
+              example:
+                object: list
+                data:
+                  - id: kokoro-v1
+                    object: model
+                    created: 0
+                    owned_by: llm-tts-api
+                  - id: voxtral-mini-3b-2507
+                    object: model
+                    created: 0
+                    owned_by: llm-tts-api
+
+  /v1/audio/speech:
+    post:
+      tags: [audio]
+      operationId: createSpeech
+      summary: Generate speech audio from text (OpenAI-compatible).
+      description: |
+        Synthesize speech using the resolved provider/model/voice for the
+        request. Returns the audio bytes — either as a `FileResponse` (a
+        temp WAV file with cleanup task; default) or a `StreamingResponse`
+        (in-memory chunks) when the `stream` query parameter is true.
+
+        The voice id must exist in the server's voice map; `voice` is a
+        logical name (e.g. `male_calm_en`), resolved to a provider-specific
+        voice or reference audio path by the service.
+      parameters:
+        - name: stream
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: |
+            When `true`, the response is streamed from memory (no temp file).
+            When `false` (default), the server writes a temp WAV and returns
+            it via `FileResponse` (cleanup runs as a background task).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SpeechRequest' }
+            examples:
+              minimal:
+                summary: Minimal example — provider/voice from server defaults
+                value:
+                  model: kokoro-v1
+                  input: 'Ciao mondo, questa è una prova di sintesi vocale.'
+                  voice: italian_female
+              with_provider_and_format:
+                summary: Pin a provider and request mp3 output
+                value:
+                  model: voxtral-mini-3b-2507
+                  input: 'Hello from the Voxtral provider.'
+                  voice: english_male
+                  provider: voxtral
+                  response_format: mp3
+                  speed: 1.0
+              streaming:
+                summary: Pair with `?stream=true` query parameter
+                value:
+                  model: kokoro-v1
+                  input: 'This response will be streamed.'
+                  voice: english_male
+                  stream_format: pcm
+                  normalize_db: -16.0
+      responses:
+        '200':
+          description: Audio bytes. Content-Type follows `response_format` (default `audio/wav`).
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+            audio/mpeg:
+              schema: { type: string, format: binary }
+            audio/flac:
+              schema: { type: string, format: binary }
+            audio/ogg:
+              schema: { type: string, format: binary }
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /v1/audio/transcriptions:
+    post:
+      tags: [audio]
+      operationId: createTranscription
+      summary: Speech-to-text transcription (NOT IMPLEMENTED).
+      description: Placeholder for the OpenAI transcription endpoint. Returns `501 not_implemented`.
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/audio/translations:
+    post:
+      tags: [audio]
+      operationId: createTranslation
+      summary: Speech translation (NOT IMPLEMENTED).
+      description: Placeholder for the OpenAI translation endpoint. Returns `501 not_implemented`.
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/audio/voices:
+    post:
+      tags: [audio]
+      operationId: createVoice
+      summary: Voice enrollment (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/audio/voice_consents:
+    get:
+      tags: [audio]
+      operationId: listVoiceConsents
+      summary: List voice consent records (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [audio]
+      operationId: createVoiceConsent
+      summary: Create a voice consent record (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/audio/voice_consents/{consent_id}:
+    parameters:
+      - $ref: '#/components/parameters/ConsentId'
+    get:
+      tags: [audio]
+      operationId: getVoiceConsent
+      summary: Retrieve one voice consent record (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [audio]
+      operationId: updateVoiceConsent
+      summary: Update a voice consent record (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [audio]
+      operationId: deleteVoiceConsent
+      summary: Delete a voice consent record (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/chat/completions:
+    post:
+      tags: [chat]
+      operationId: createChatCompletion
+      summary: Create a chat completion (NOT IMPLEMENTED).
+      description: Placeholder for OpenAI-compatible chat. Returns `501 not_implemented`.
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    get:
+      tags: [chat]
+      operationId: listChatCompletions
+      summary: List chat completions (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/chat/completions/{completion_id}:
+    parameters:
+      - $ref: '#/components/parameters/CompletionId'
+    get:
+      tags: [chat]
+      operationId: retrieveChatCompletion
+      summary: Retrieve one chat completion (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [chat]
+      operationId: updateChatCompletion
+      summary: Update one chat completion (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [chat]
+      operationId: deleteChatCompletion
+      summary: Delete one chat completion (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/chat/completions/{completion_id}/messages:
+    parameters:
+      - $ref: '#/components/parameters/CompletionId'
+    get:
+      tags: [chat]
+      operationId: listChatCompletionMessages
+      summary: List messages on one chat completion (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/realtime/client_secrets:
+    post:
+      tags: [realtime]
+      operationId: createRealtimeClientSecret
+      summary: Mint a realtime client secret (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/realtime/calls/{call_id}/accept:
+    parameters:
+      - $ref: '#/components/parameters/CallId'
+    post:
+      tags: [realtime]
+      operationId: acceptRealtimeCall
+      summary: Accept a realtime call (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/realtime/calls/{call_id}/hangup:
+    parameters:
+      - $ref: '#/components/parameters/CallId'
+    post:
+      tags: [realtime]
+      operationId: hangupRealtimeCall
+      summary: Hang up a realtime call (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/realtime/calls/{call_id}/refer:
+    parameters:
+      - $ref: '#/components/parameters/CallId'
+    post:
+      tags: [realtime]
+      operationId: referRealtimeCall
+      summary: Transfer (refer) a realtime call (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/realtime/calls/{call_id}/reject:
+    parameters:
+      - $ref: '#/components/parameters/CallId'
+    post:
+      tags: [realtime]
+      operationId: rejectRealtimeCall
+      summary: Reject a realtime call (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/realtime/sessions:
+    post:
+      tags: [realtime]
+      operationId: createRealtimeSession
+      summary: Create a realtime session (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/realtime/transcription_sessions:
+    post:
+      tags: [realtime]
+      operationId: createRealtimeTranscriptionSession
+      summary: Create a realtime transcription session (NOT IMPLEMENTED).
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+components:
+  parameters:
+    ConsentId:
+      name: consent_id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Voice consent record identifier.
+    CompletionId:
+      name: completion_id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Chat completion identifier.
+    CallId:
+      name: call_id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Realtime call identifier.
+
+  schemas:
+    SpeechRequest:
+      type: object
+      required: [model, input, voice]
+      properties:
+        model:
+          type: string
+          description: |
+            Model id (must be in the active provider's allowed list).
+            Use `GET /v1/models` to discover valid ids.
+        input:
+          type: string
+          description: Text to synthesize. Punctuation and number expansion happen server-side.
+        voice:
+          type: string
+          description: |
+            Logical voice id from the server's voice map (e.g.
+            `italian_female`, `english_male`). Resolved to a
+            provider-specific voice or reference audio path.
+        provider:
+          type: [string, "null"]
+          default: null
+          description: |
+            Pin the request to a specific provider (`mlx_audio`, `voxtral`,
+            `vllm-omni`). When null, the server picks based on `TTS_PROVIDER`.
+        response_format:
+          type: string
+          default: wav
+          description: |
+            Audio format. Common values: `wav`, `mp3`, `flac`, `ogg`. Drives
+            the response `Content-Type`.
+        instructions:
+          type: [string, "null"]
+          default: null
+          description: |
+            Optional style/instructions string passed to providers that
+            support it (e.g. Voxtral). Ignored by providers that don't.
+        speed:
+          type: [number, "null"]
+          default: null
+          description: Speech rate multiplier; provider-dependent (commonly 0.5–2.0).
+        stream_format:
+          type: [string, "null"]
+          default: null
+          description: |
+            Optional internal stream format hint (e.g. `pcm`); only meaningful
+            when combined with `?stream=true`.
+        normalize_db:
+          type: [number, "null"]
+          default: null
+          description: |
+            Target RMS normalization level in dB (e.g. `-16`). Overrides the
+            voice-map default. Omit for the voice's configured target.
+
+    ModelObject:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        object:
+          type: string
+          enum: [model]
+          default: model
+        created:
+          type: integer
+          default: 0
+          description: Unix timestamp; always 0 in this implementation.
+        owned_by:
+          type: string
+          default: llm-tts-api
+
+    ModelListResponse:
+      type: object
+      required: [data]
+      properties:
+        object:
+          type: string
+          enum: [list]
+          default: list
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ModelObject' }
+
+    TranscriptionResponse:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, description: Transcribed text (placeholder). }
+
+    TranslationResponse:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, description: Translated text (placeholder). }
+
+    ErrorDetail:
+      type: object
+      required: [message, type, code]
+      properties:
+        message: { type: string }
+        type:
+          type: string
+          enum: [invalid_request_error, not_implemented_error, server_error]
+        param:
+          type: [string, "null"]
+          default: null
+        code:
+          type: string
+          description: |
+            Machine-readable error code. Known codes:
+            `invalid_parameter`, `voice_reference_missing`, `not_implemented`,
+            `internal_error`.
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error: { $ref: '#/components/schemas/ErrorDetail' }
+
+  responses:
+    InvalidRequest:
+      description: |
+        Invalid request — generic `invalid_parameter` or the more specific
+        `voice_reference_missing` when a voice resolves to a missing reference
+        audio file.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          examples:
+            invalid_parameter:
+              value:
+                error:
+                  message: 'Unknown voice: italian_xyz'
+                  type: invalid_request_error
+                  param: voice
+                  code: invalid_parameter
+            voice_reference_missing:
+              value:
+                error:
+                  message: 'Reference audio file not found for voice italian_female'
+                  type: invalid_request_error
+                  param: voice
+                  code: voice_reference_missing
+
+    NotImplemented:
+      description: Endpoint is reserved (OpenAI-compatible URL) but not implemented in this version.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          example:
+            error:
+              message: "Endpoint '/v1/audio/transcriptions' is not implemented yet"
+              type: not_implemented_error
+              param: null
+              code: not_implemented
+
+    InternalError:
+      description: Internal failure during synthesis or unrelated server-side error.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          example:
+            error:
+              message: 'Speech generation failed: provider error'
+              type: server_error
+              param: null
+              code: internal_error
