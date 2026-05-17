@@ -31,5 +31,7 @@ def test_not_implemented_routes_return_openai_error(client, method: str, path: s
     assert response.status_code == 501
     payload = response.json()
     assert "error" in payload
-    assert payload["error"]["type"] == "not_implemented_error"
+    assert payload["error"]["type"] == "validation_error"
     assert payload["error"]["code"] == "not_implemented"
+    assert response.headers.get("X-Error-Code") == "not_implemented"
+    assert "request_id" in payload["error"]
