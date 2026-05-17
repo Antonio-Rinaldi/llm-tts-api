@@ -1,3 +1,13 @@
+"""Health/readiness endpoint tests.
+
+Post-S-003: ``/ready`` reads ``request.app.state.tts_service`` directly.
+The standard ``client`` fixture installs a healthy fake on that slot; the
+degraded path is exercised by removing the slot at test time.
+"""
+
+from __future__ import annotations
+
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -16,34 +26,19 @@ def test_ready_returns_ready_when_dependencies_are_usable(client: TestClient) ->
 
 
 def test_ready_returns_503_when_tts_service_is_unavailable(
-    monkeypatch: "pytest.MonkeyPatch",  # noqa: F821 — runtime import below
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``/ready`` reaches into ``dependencies.get_tts_service`` directly
-    (attribute access on the module), so we monkeypatch the module to
-    simulate a failed lookup here. The standard ``client`` fixture installs
-    the happy-path fake; this test exercises the failure branch."""
-    from llm_tts_api import dependencies
-    from llm_tts_api.main import create_app
-    from tests.fakes.fake_tts_service import FakeTTSService
+    """``/ready`` returns 503 when ``app.state.tts_service`` is missing or
+    raises during access. We simulate by building an app with the lifespan
+    bypassed and explicitly NOT populating ``tts_service``."""
+    from llm_tts_api.main import TEST_BYPASS_ENV, create_app
 
-    # First install a healthy fake so app startup succeeds.
-    healthy_fake = FakeTTSService()
-    # Guarded clear (the attribute is an lru_cache wrapper before patching).
-    getattr(dependencies.get_tts_service, "cache_clear", lambda: None)()
-    monkeypatch.setattr(dependencies, "get_tts_service", lambda: healthy_fake)
-
+    monkeypatch.setenv(TEST_BYPASS_ENV, "1")
     app = create_app()
-
-    def _failing_service() -> FakeTTSService:
-        raise RuntimeError("tts unavailable")
+    # Intentionally do NOT set app.state.tts_service.
 
     with TestClient(app) as test_client:
-        # Swap in the failing factory after startup so /ready sees the
-        # failure on the live request.
-        monkeypatch.setattr(dependencies, "get_tts_service", _failing_service)
         response = test_client.get("/ready")
 
     assert response.status_code == 503
     assert response.json()["status"] == "degraded"
-    # monkeypatch teardown restores the lru_cache wrapper; no manual clear.
-

@@ -1,3 +1,22 @@
+"""Shared test fixtures.
+
+Post-S-003 design: the lifespan refactor moved singletons onto ``app.state``,
+so the test fixture now uses a single, simple mechanism:
+
+1. Set ``LLM_TTS_API_TEST_NO_LIFESPAN=1`` so lifespan does NOT construct the
+   real dependency graph (no model loads, no env-driven Settings parsing,
+   no provider preload).
+2. Build the app, then **manually populate** every ``app.state`` slot that
+   any router or health endpoint reads. The TTS service slot points at the
+   typed ``FakeTTSService``; the others are minimal stubs that satisfy
+   attribute access without triggering heavy construction.
+3. Wire ``app.dependency_overrides[get_tts_service] = lambda: fake`` so
+   FastAPI ``Depends(get_tts_service)`` calls in routers also resolve to
+   the fake.
+"""
+
+from __future__ import annotations
+
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -15,6 +34,12 @@ from tests.fakes.fake_tts_service import FakeTTSService  # noqa: E402  (path set
 
 @pytest.fixture(autouse=True)
 def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reset env vars that ``Settings.__post_init__`` reads.
+
+    ``LLM_TTS_API_TEST_NO_LIFESPAN`` is NOT cleared here — fixtures that
+    need bypass set it themselves; tests that exercise real lifespan
+    construction explicitly leave it unset.
+    """
     keys = [
         "TTS_PROVIDER",
         "TTS_MLX_AUDIO_MODEL_DEFAULT",
@@ -27,9 +52,12 @@ def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "STT_MODEL_ALLOWED",
         "TTS_MAX_INPUT_CHARS",
         "TTS_VOICE_MAP_FILE",
+        "TTS_DEVICE",
+        "TTS_DTYPE",
         "APP_NAME",
         "APP_ENV",
         "APP_LOG_LEVEL",
+        "APP_LOG_FORMAT",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -41,66 +69,72 @@ def fake_tts_service() -> FakeTTSService:
     return FakeTTSService()
 
 
+def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
+    """Populate every ``app.state`` slot a router or health endpoint may read.
+
+    The TTS service slot is the FakeTTSService; other slots are minimal
+    stubs constructed without calling their heavy __init__ paths. Settings
+    is built via ``object.__new__`` to skip ``__post_init__`` (which would
+    try to parse env-driven config and read a voice map file).
+    """
+    from llm_tts_api.config import Settings
+    from llm_tts_api.engine import DeviceProfile
+    from llm_tts_api.services.model_registry import ModelRegistry
+    from llm_tts_api.services.stt_service import STTService
+    from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
+
+    # Skip Settings.__post_init__ — that path parses env vars and requires
+    # a real voice map file. Tests fill in only the attributes they need.
+    settings = object.__new__(Settings)
+    settings.app_name = "llm-tts-api"
+    settings.app_env = "test"
+    settings.app_log_level = "INFO"
+    settings.tts_provider = "mlx_audio"
+    settings.tts_model_default = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+    settings.tts_model_allowed = ["Qwen/Qwen3-TTS-12Hz-0.6B-Base"]
+    settings.tts_mlx_audio_model_default = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+    settings.tts_mlx_audio_model_allowed = ["Qwen/Qwen3-TTS-12Hz-0.6B-Base"]
+    settings.tts_voxtral_model_default = "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit"
+    settings.tts_voxtral_model_allowed = ["mlx-community/Voxtral-4B-TTS-2603-mlx-4bit"]
+    settings.tts_vllm_omni_model_default = "vllm-omni/default-tts"
+    settings.tts_vllm_omni_model_allowed = ["vllm-omni/default-tts"]
+    settings.stt_model_default = "whisper-1"
+    settings.stt_model_allowed = ["whisper-1"]
+    settings.tts_voice_map = {}
+    settings.tts_max_input_chars = 4096
+    settings.tts_max_concurrent_requests = 1
+
+    app_state.settings = settings  # type: ignore[attr-defined]
+    app_state.device_profile = DeviceProfile(  # type: ignore[attr-defined]
+        device="cpu", dtype="float32", source="auto"
+    )
+    app_state.model_registry = ModelRegistry(settings)  # type: ignore[attr-defined]
+    app_state.provider_registry = TTSProviderRegistry(providers=[])  # type: ignore[attr-defined]
+    app_state.tts_service = fake_tts  # type: ignore[attr-defined]
+    app_state.stt_service = STTService()  # type: ignore[attr-defined]
+
+
 @pytest.fixture
 def client(
     monkeypatch: pytest.MonkeyPatch, fake_tts_service: FakeTTSService
 ) -> Iterator[TestClient]:
-    """``TestClient`` wired with a typed ``FakeTTSService`` on two seams.
+    """``TestClient`` wired with stubbed app.state slots + a typed FakeTTSService.
 
-    Two seams have to be covered because ``llm_tts_api`` resolves
-    ``get_tts_service`` in two distinct ways:
-
-    1. **Lifespan (attribute access)** — ``main.py:lifespan`` does
-       ``from llm_tts_api import dependencies`` then
-       ``dependencies.get_tts_service()`` at startup to force preload.
-       ``monkeypatch.setattr(dependencies, "get_tts_service", …)`` swaps the
-       attribute on the module so that direct call yields the fake.
-
-    2. **Route handler (FastAPI Depends)** — routers do
-       ``from llm_tts_api.dependencies import get_tts_service`` then
-       ``Depends(get_tts_service)``. FastAPI captures the **original**
-       callable at route-registration time; the monkeypatch above does NOT
-       reach it. ``app.dependency_overrides[get_tts_service] = …`` is
-       consulted at request time and correctly returns the fake.
-
-    Both seams pointing at the same ``fake_tts_service`` keeps the test
-    surface coherent: assertions on ``fake_tts_service.calls`` reflect every
-    invocation, regardless of whether it came from lifespan or a route.
-
-    Also clears the ``get_tts_service`` lru_cache around the test so each
-    case starts from a clean resolution.
+    Bypass env ``LLM_TTS_API_TEST_NO_LIFESPAN=1`` skips real lifespan
+    construction. We populate every ``app.state`` slot that routers read,
+    then override the ``get_tts_service`` Depends so FastAPI's resolution
+    machinery returns the fake too.
     """
-    from llm_tts_api import dependencies
-    from llm_tts_api.main import create_app
+    from llm_tts_api.dependencies import get_tts_service
+    from llm_tts_api.main import TEST_BYPASS_ENV, create_app
 
-    # IMPORTANT: capture the ORIGINAL ``get_tts_service`` reference BEFORE
-    # the monkeypatch swaps it out. Routers do
-    # ``from llm_tts_api.dependencies import get_tts_service`` at import
-    # time and pass THAT reference into ``Depends()``; FastAPI uses it as
-    # the dictionary key for ``app.dependency_overrides``. If we instead
-    # used the monkeypatched lambda as the key, the override would never
-    # match the router's Depends and the real service would be resolved.
-    original_get_tts_service = dependencies.get_tts_service
-
-    # ``get_tts_service`` is an ``lru_cache``-wrapped function at module
-    # level. Clear it before the monkeypatch so stale singletons from a
-    # previous test don't leak into route resolution.
-    _safely_cache_clear(original_get_tts_service)
-    monkeypatch.setattr(dependencies, "get_tts_service", lambda: fake_tts_service)
-
+    monkeypatch.setenv(TEST_BYPASS_ENV, "1")
     app = create_app()
-    app.dependency_overrides[original_get_tts_service] = lambda: fake_tts_service
+    _stub_app_state(app.state, fake_tts_service)
+    app.dependency_overrides[get_tts_service] = lambda: fake_tts_service
+
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        # monkeypatch teardown will restore the original lru_cache wrapper
-        # after this fixture exits; nothing to clear here.
-
-
-def _safely_cache_clear(maybe_cached: object) -> None:
-    """Call ``cache_clear`` if present (the function is an lru_cache wrapper)."""
-    fn = getattr(maybe_cached, "cache_clear", None)
-    if callable(fn):
-        fn()

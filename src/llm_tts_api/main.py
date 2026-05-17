@@ -1,3 +1,14 @@
+"""Application factory + lifespan.
+
+The lifespan is the only seam where process-wide singletons are constructed
+(S-003 / FR-HL-03). All routers consume them via ``Depends(get_*)`` which
+reads from ``app.state``. No module-level ``@lru_cache`` factories survive.
+
+Tests bypass lifespan construction by setting ``LLM_TTS_API_TEST_NO_LIFESPAN=1``
+in the environment; in that mode lifespan exits without touching ``app.state``
+and the test fixture injects whichever fakes it wants (see ``tests/conftest.py``).
+"""
+
 from __future__ import annotations
 
 import os
@@ -10,14 +21,17 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
-from llm_tts_api import dependencies
 from llm_tts_api.app_logging import setup_logging
+from llm_tts_api.dependencies import build_default_dependencies
 from llm_tts_api.errors import OpenAIHTTPException
+from llm_tts_api.observability import RequestIDMiddleware
 from llm_tts_api.routers.audio import router as audio_router
 from llm_tts_api.routers.chat import router as chat_router
 from llm_tts_api.routers.health import router as health_router
 from llm_tts_api.routers.models import router as models_router
 from llm_tts_api.routers.realtime import router as realtime_router
+
+TEST_BYPASS_ENV = "LLM_TTS_API_TEST_NO_LIFESPAN"
 
 
 def _load_env_file(path: Path) -> None:
@@ -48,12 +62,25 @@ def create_app() -> FastAPI:
     setup_logging(os.getenv("APP_LOG_LEVEL", "INFO"))
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        """Warm startup dependencies and fail early if preload breaks."""
-        dependencies.get_tts_service()
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """Construct process-wide singletons and stash them on ``app.state``.
+
+        When ``LLM_TTS_API_TEST_NO_LIFESPAN`` is truthy, skip construction —
+        the test fixture is responsible for populating ``app.state`` with
+        whatever fakes/stubs it needs.
+        """
+        if not _test_bypass_active():
+            deps = build_default_dependencies()
+            app.state.settings = deps.settings
+            app.state.device_profile = deps.device_profile
+            app.state.model_registry = deps.model_registry
+            app.state.provider_registry = deps.provider_registry
+            app.state.tts_service = deps.tts_service
+            app.state.stt_service = deps.stt_service
         yield
 
     app = FastAPI(title="llm-tts-api", lifespan=lifespan)
+    app.add_middleware(RequestIDMiddleware)
 
     @app.exception_handler(OpenAIHTTPException)
     async def openai_exception_handler(_: Request, exc: OpenAIHTTPException) -> JSONResponse:
@@ -68,8 +95,26 @@ def create_app() -> FastAPI:
     return app
 
 
+def _test_bypass_active() -> bool:
+    """Return ``True`` when the lifespan should skip singleton construction.
+
+    Test bypass is signalled by ``LLM_TTS_API_TEST_NO_LIFESPAN`` being a
+    truthy string (``1``, ``true``, ``yes`` — case-insensitive). Anything
+    else, including unset, runs the real lifespan.
+    """
+    raw = os.environ.get(TEST_BYPASS_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes"}
+
+
 def run() -> None:
-    """Run the API server with uvicorn default local settings."""
+    """Run the API server with uvicorn default local settings.
+
+    `.env` / `.env.local` are loaded HERE (the CLI entry) rather than at
+    module-import time. Library-import callers (tests, tools) get the
+    actual process env unchanged, which keeps `monkeypatch.setenv` and CI
+    env vars authoritative.
+    """
+    _load_default_env_files()
     uvicorn.run(
         "llm_tts_api.main:app",
         host="0.0.0.0",
@@ -79,10 +124,11 @@ def run() -> None:
     )
 
 
-_load_default_env_files()
+# Module-level app is required for `uvicorn llm_tts_api.main:app` style
+# launches AND for the ``run()`` CLI which uses the same module-path string.
+# Env-file loading is deliberately NOT done here — see ``run()``.
 app = create_app()
 
 
 if __name__ == "__main__":
     run()
-

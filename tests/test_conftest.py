@@ -1,10 +1,9 @@
-"""Regression test for the ``client`` fixture override pattern.
+"""Regression test for the ``client`` fixture override pattern (post-S-003).
 
-The original ``monkeypatch.setattr(dependencies, "get_tts_service", …)``
-approach silently failed to intercept FastAPI ``Depends(get_tts_service)``
-when a router used the idiomatic ``from llm_tts_api.dependencies import
-get_tts_service`` form. The new ``app.dependency_overrides`` wiring fixes
-this; this test pins down the fix so a future revert to the old pattern
+The ``client`` fixture uses ``app.dependency_overrides`` so that
+``Depends(get_tts_service)`` resolves to the test's ``FakeTTSService``
+regardless of how a router imports the dependency. This test pins down
+that behavior so a future regression (e.g. dropping the override wiring)
 would be caught.
 """
 

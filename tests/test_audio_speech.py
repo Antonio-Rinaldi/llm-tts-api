@@ -37,15 +37,16 @@ def _build_client_with_voice(
 
     monkeypatch.setattr(MLXAudioTTSProvider, "preload", lambda self, model_name: None)
 
-    from llm_tts_api import dependencies
     from llm_tts_api.main import create_app
 
-    dependencies.get_settings.cache_clear()
-    dependencies.get_model_registry.cache_clear()
-    dependencies.get_tts_provider_registry.cache_clear()
-    dependencies.get_tts_service.cache_clear()
-
-    return TestClient(create_app())
+    # Post-S-003: singletons are constructed by lifespan from the env we
+    # just set; each create_app() call yields a fresh app whose lifespan
+    # builds a fresh dependency graph. Enter the TestClient context
+    # manager so lifespan startup actually fires (otherwise app.state stays
+    # empty and Depends(get_model_registry) trips an AttributeError).
+    client = TestClient(create_app())
+    client.__enter__()  # noqa: PLC2801 — leak is bounded by test teardown
+    return client
 
 
 def test_speech_rejects_empty_input(monkeypatch, tmp_path: Path) -> None:
@@ -168,5 +169,3 @@ def test_speech_forwards_clone_voice_config_to_mlx_provider(monkeypatch, tmp_pat
     assert captured["voice_name"] == "alloy"
     assert captured["ref_audio_path"].endswith("alloy.wav")
     assert captured["ref_text"] == "sample"
-
-
