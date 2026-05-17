@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf  # type: ignore[import-untyped]
 
+from llm_tts_api.engine import Device
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
 from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
@@ -21,6 +22,10 @@ class MLXAudioTTSProvider(CachedModelProvider):
     """Generic mlx-audio provider supporting clone and named-voice synthesis."""
 
     provider_name = "mlx_audio"
+    # mlx-audio is built on Apple's MLX runtime (Metal backend). Only Apple
+    # Silicon hosts ("mps") can execute it; on CUDA/CPU the underlying load
+    # would fail. Declared as a capability per FR-HW-07.
+    supports_devices: frozenset[Device] = frozenset({"mps"})
 
     def _load_model(self, model_name: str) -> Any:
         """Load and return an ``mlx_audio`` TTS model instance."""

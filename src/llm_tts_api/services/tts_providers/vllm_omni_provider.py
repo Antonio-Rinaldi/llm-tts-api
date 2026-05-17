@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf  # type: ignore[import-untyped]
 
+from llm_tts_api.engine import Device
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
 from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
@@ -22,6 +23,9 @@ class VllmOmniTTSProvider(CachedModelProvider):
     """Adapter strategy for vllm-omni TTS backends."""
 
     provider_name = "vllm-omni"
+    # vllm-omni runs on NVIDIA hardware; auto-selection routes "cuda"
+    # detections here.
+    supports_devices: frozenset[Device] = frozenset({"cuda"})
 
     @staticmethod
     def _resolve_loader() -> Any:

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from llm_tts_api.config import VoiceConfig
+from llm_tts_api.engine import Device
 
 
 @dataclass(slots=True, frozen=True)
@@ -28,9 +29,16 @@ class SynthesisRequest:
 
 
 class TTSProviderStrategy(Protocol):
-    """Strategy contract implemented by every TTS provider backend."""
+    """Strategy contract implemented by every TTS provider backend.
+
+    ``supports_devices`` declares the set of inference devices a provider
+    can run on. The auto-selection layer (S-006 / FR-HW-04..07) uses this
+    capability set to pick a viable provider for the detected device, and
+    to validate any explicit ``TTS_PROVIDER`` env override.
+    """
 
     provider_name: str
+    supports_devices: frozenset[Device]
 
     def synthesize_chunks(self, request: SynthesisRequest) -> list[bytes]:
         """Generate one WAV payload per input chunk."""

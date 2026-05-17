@@ -21,6 +21,10 @@ from llm_tts_api.config import Settings
 from llm_tts_api.engine import DeviceProfile, resolve_device_profile
 from llm_tts_api.services.model_registry import ModelRegistry
 from llm_tts_api.services.stt_service import STTService
+from llm_tts_api.services.tts_providers.auto_select import (
+    ProviderSelection,
+    select_provider,
+)
 from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSProvider
 from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 from llm_tts_api.services.tts_providers.vllm_omni_provider import VllmOmniTTSProvider
@@ -40,6 +44,7 @@ class AppDependencies:
 
     settings: Settings
     device_profile: DeviceProfile
+    provider_selection: ProviderSelection
     model_registry: ModelRegistry
     provider_registry: TTSProviderRegistry
     tts_service: TTSService
@@ -55,7 +60,10 @@ def build_default_dependencies() -> AppDependencies:
     """
     settings = Settings()
     device_profile = resolve_device_profile()
-    model_registry = ModelRegistry(settings)
+    # Registration order is the auto-select priority (FR-HW-04):
+    #   mps  → mlx_audio, voxtral
+    #   cuda → vllm-omni
+    #   cpu  → no current provider declares support → fails startup
     provider_registry = TTSProviderRegistry(
         providers=[
             MLXAudioTTSProvider(),
@@ -63,6 +71,22 @@ def build_default_dependencies() -> AppDependencies:
             VllmOmniTTSProvider(),
         ]
     )
+    provider_selection = select_provider(
+        device_profile=device_profile,
+        registry=provider_registry,
+    )
+    # Reconcile the legacy ``settings.tts_provider`` slot with the
+    # auto-selected name so downstream consumers (TTSService preload,
+    # model-default lookup) see the same provider the registry will hand
+    # them. Settings is mutable by design (no ``frozen=True``).
+    settings.tts_provider = provider_selection.provider_name
+    settings.tts_model_default = settings.tts_model_default_for_provider(
+        provider_selection.provider_name
+    )
+    settings.tts_model_allowed = settings.tts_model_allowed_for_provider(
+        provider_selection.provider_name
+    )
+    model_registry = ModelRegistry(settings)
     tts_service = TTSService(
         settings=settings,
         model_registry=model_registry,
@@ -72,6 +96,7 @@ def build_default_dependencies() -> AppDependencies:
     return AppDependencies(
         settings=settings,
         device_profile=device_profile,
+        provider_selection=provider_selection,
         model_registry=model_registry,
         provider_registry=provider_registry,
         tts_service=tts_service,
@@ -114,3 +139,8 @@ def get_stt_service(request: Request) -> STTService:
 def get_device_profile(request: Request) -> DeviceProfile:
     """Return the process-wide :class:`DeviceProfile` (S-005)."""
     return cast(DeviceProfile, request.app.state.device_profile)
+
+
+def get_provider_selection(request: Request) -> ProviderSelection:
+    """Return the process-wide :class:`ProviderSelection` (S-006)."""
+    return cast(ProviderSelection, request.app.state.provider_selection)

@@ -81,6 +81,7 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     from llm_tts_api.engine import DeviceProfile
     from llm_tts_api.services.model_registry import ModelRegistry
     from llm_tts_api.services.stt_service import STTService
+    from llm_tts_api.services.tts_providers.auto_select import ProviderSelection
     from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 
     # Skip Settings.__post_init__ — that path parses env vars and requires
@@ -107,6 +108,9 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     app_state.settings = settings  # type: ignore[attr-defined]
     app_state.device_profile = DeviceProfile(  # type: ignore[attr-defined]
         device="cpu", dtype="float32", source="auto"
+    )
+    app_state.provider_selection = ProviderSelection(  # type: ignore[attr-defined]
+        provider_name="mlx_audio", device="cpu", source="auto"
     )
     app_state.model_registry = ModelRegistry(settings)  # type: ignore[attr-defined]
     app_state.provider_registry = TTSProviderRegistry(providers=[])  # type: ignore[attr-defined]

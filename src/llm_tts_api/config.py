@@ -80,11 +80,31 @@ class Settings:
         self.app_log_level = os.getenv("APP_LOG_LEVEL", self.app_log_level)
 
     def _load_provider_models(self) -> None:
-        """Load provider choice and provider-specific model allow-lists."""
-        provider_env = os.getenv("TTS_PROVIDER", self.tts_provider)
-        self.tts_provider = (provider_env or "mlx_audio").strip().lower()
-        if self.tts_provider not in {"mlx_audio", "voxtral", "vllm-omni"}:
-            raise ValueError("TTS_PROVIDER must be one of 'mlx_audio', 'voxtral', or 'vllm-omni'")
+        """Load provider choice and provider-specific model allow-lists.
+
+        Post-S-006: ``TTS_PROVIDER`` is an *override*, no longer a default
+        (FR-HW-06). When unset, empty, or ``auto`` we leave ``tts_provider``
+        as the legacy fallback (``mlx_audio``) so any pre-S-006 consumer
+        still sees a value, but auto-selection in ``dependencies.py`` will
+        replace it with the device-derived choice. When an explicit
+        provider is named we still validate the spelling here so a typo
+        fails fast in ``Settings.__post_init__`` (before auto-selection
+        runs).
+        """
+        provider_env = os.getenv("TTS_PROVIDER")
+        raw = (provider_env or "").strip().lower()
+        if raw in {"", "auto"}:
+            # Auto-selection mode: keep the legacy default for backward
+            # compat with consumers that read ``settings.tts_provider``
+            # directly during startup. ``dependencies.py`` overwrites this
+            # with the auto-selected name once the device profile is known.
+            self.tts_provider = "mlx_audio"
+        else:
+            if raw not in {"mlx_audio", "voxtral", "vllm-omni"}:
+                raise ValueError(
+                    "TTS_PROVIDER must be one of 'mlx_audio', 'voxtral', 'vllm-omni' (or 'auto')"
+                )
+            self.tts_provider = raw
 
         mlx_default, mlx_allowed = self._load_provider_model_list(
             default_env="TTS_MLX_AUDIO_MODEL_DEFAULT",
