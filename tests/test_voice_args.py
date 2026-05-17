@@ -58,5 +58,3 @@ def test_build_generation_args_maps_supported_fields() -> None:
     )
 
     assert out == {"lang_code": "Italian", "temperature": 0.8, "top_p": 0.95}
-
-

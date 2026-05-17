@@ -63,4 +63,3 @@ def normalize_wav_rms(wav_bytes: bytes, target_db: float) -> bytes:
         writer.writeframes(out_frames)
 
     return out.getvalue()
-

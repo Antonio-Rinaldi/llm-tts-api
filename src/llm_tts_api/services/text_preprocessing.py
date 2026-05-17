@@ -189,4 +189,3 @@ def split_text_semantic(text: str, max_chars: int, max_sentences_per_chunk: int 
         chunks.append(" ".join(current_sentences).strip())
 
     return chunks
-

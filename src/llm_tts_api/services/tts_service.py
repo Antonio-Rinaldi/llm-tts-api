@@ -295,5 +295,3 @@ class TTSService:
                 exc,
             )
             raise internal_error(f"Speech generation failed: {exc}") from exc
-
-

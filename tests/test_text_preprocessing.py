@@ -20,4 +20,3 @@ def test_split_text_semantic_limits_sentences_per_chunk() -> None:
     chunks = split_text_semantic(text, max_chars=120, max_sentences_per_chunk=2)
 
     assert chunks == ["Prima frase. Seconda frase.", "Terza frase. Quarta frase."]
-

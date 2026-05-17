@@ -35,4 +35,3 @@ class TTSProviderStrategy(Protocol):
     def synthesize_chunks(self, request: SynthesisRequest) -> list[bytes]:
         """Generate one WAV payload per input chunk."""
         ...
-

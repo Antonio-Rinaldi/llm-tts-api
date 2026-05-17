@@ -41,7 +41,6 @@ class MLXAudioTTSProvider(CachedModelProvider):
             ) from exc
         return model
 
-
     @staticmethod
     def _signature_params(model: Any) -> set[str]:
         """Inspect supported generate parameters, with safe fallback defaults."""
@@ -113,4 +112,3 @@ class MLXAudioTTSProvider(CachedModelProvider):
                     output.append(buf.getvalue())
 
         return output
-

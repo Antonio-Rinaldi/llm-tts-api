@@ -20,4 +20,3 @@ class TTSProviderRegistry:
                 param="provider",
             )
         return provider
-

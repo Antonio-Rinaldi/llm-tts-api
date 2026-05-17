@@ -68,5 +68,3 @@ def test_provider_specific_default_model_for_vllm_omni(monkeypatch, tmp_path: Pa
     model, provider = registry.resolve_tts_target(None, None)
     assert provider == "vllm-omni"
     assert model == "vllm-omni/default-tts"
-
-

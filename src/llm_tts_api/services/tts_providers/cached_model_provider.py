@@ -46,4 +46,3 @@ class CachedModelProvider:
     def preload(self, model_name: str) -> None:
         """Warm up the cache for one model name during startup."""
         self._get_model(model_name)
-

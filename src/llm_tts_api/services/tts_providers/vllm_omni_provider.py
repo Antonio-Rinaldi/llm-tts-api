@@ -63,7 +63,6 @@ class VllmOmniTTSProvider(CachedModelProvider):
             ) from exc
         return model
 
-
     @staticmethod
     def _signature_params(model: object) -> set[str]:
         """Return generate signature parameters or a robust fallback list."""
@@ -196,5 +195,3 @@ class VllmOmniTTSProvider(CachedModelProvider):
                     output.append(self._result_to_wav_bytes(result))
 
         return output
-
-

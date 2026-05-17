@@ -101,5 +101,3 @@ def test_synthesize_chunks_uses_clone_kwargs_even_when_voice_name_present() -> N
             "language": "Italian",
         }
     ]
-
-

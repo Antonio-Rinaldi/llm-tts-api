@@ -37,7 +37,6 @@ class VoxtralTTSProvider(CachedModelProvider):
             ) from exc
         return model
 
-
     @staticmethod
     def _signature_params(model: Any) -> set[str]:
         """Inspect supported generation parameters with safe defaults."""
@@ -91,4 +90,3 @@ class VoxtralTTSProvider(CachedModelProvider):
                     output.append(buf.getvalue())
 
         return output
-

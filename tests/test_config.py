@@ -150,5 +150,3 @@ def test_settings_vllm_omni_provider_specific_model_env(
     assert settings.tts_provider == "vllm-omni"
     assert settings.tts_model_default == "vllm-omni/default-tts"
     assert settings.tts_model_allowed == ["vllm-omni/default-tts", "vllm-omni/voice-clone-tts"]
-
-

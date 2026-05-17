@@ -246,4 +246,3 @@ class Settings:
         if provider == "voxtral":
             return list(self.tts_voxtral_model_allowed)
         return list(self.tts_mlx_audio_model_allowed)
-

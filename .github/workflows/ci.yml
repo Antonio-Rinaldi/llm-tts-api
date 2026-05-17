@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      # astral-sh/setup-uv@v4.2.0
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+      - name: Lint
+        run: uv run ruff check src/ tests/ scripts/
+      - name: Format check
+        run: uv run ruff format --check src/ tests/ scripts/
+      - name: Type check
+        run: uv run mypy src/
+      # Coverage ratchet (OQ-1 resolved): floor starts at the measured day-1 level
+      # and may only be raised over the cycle, never lowered. End-of-cycle target ≥80%.
+      - name: Test
+        run: uv run pytest --cov=src/llm_tts_api --cov-fail-under=83
+      # pip-audit gate (NFR-SE-05): fails the build on any advisory by default.
+      # --skip-editable avoids attempting to audit the project itself (not on PyPI).
+      - name: Dependency audit
+        run: uv run pip-audit --skip-editable

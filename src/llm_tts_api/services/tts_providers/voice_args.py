@@ -99,5 +99,3 @@ def build_generation_args(
         **({temperature_param: temperature} if temperature_param else {}),
         **({top_p_param: top_p} if top_p_param else {}),
     }
-
-

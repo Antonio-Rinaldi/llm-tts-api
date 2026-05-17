@@ -109,4 +109,3 @@ def test_result_to_wav_bytes_rejects_unsupported_payload() -> None:
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail["param"] == "provider"
-
