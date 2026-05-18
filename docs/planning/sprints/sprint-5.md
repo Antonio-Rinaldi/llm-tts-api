@@ -7,7 +7,7 @@
 > UAT: docs/specs/analyst-UAT.md
 > Author: Sprint Planner (AI-assisted)
 > Date: 2026-05-18
-> Status: READY-FOR-REVIEW
+> Status: DONE
 > Version: 1.0
 
 ## 1. Sprint Objective
@@ -40,7 +40,7 @@ Service-boundary rule applies. S-018 consumes the translation contract S-017 pub
 ## 5. Stories
 
 ### S-017: OpenAI adapter as thin translator
-- **Status:** READY-FOR-REVIEW
+- **Status:** DONE
 - **Type:** User
 - **Parallel with:** None within this sprint
 - **Depends on (intra-sprint):** None (depends on S-013 — DONE)
@@ -51,11 +51,11 @@ Service-boundary rule applies. S-018 consumes the translation contract S-017 pub
 
 | # | Task | Purpose | Parallel | Status | Refs |
 |---|------|---------|----------|--------|------|
-| 1 | Define the OpenAI→rich request mapping table | Document each OpenAI field (`model`, `input`, `voice`, `response_format`, `speed`, `stream`) → rich-endpoint field, including defaults applied for fields the OpenAI schema does not expose. Lives in the implementation notes so S-018 can pair against it. | No (foundation) | READY-FOR-REVIEW | FR-OA-01, SRS §5 G-1 |
-| 2 | Refactor `POST /v1/audio/speech` handler to translate + delegate | Replace direct `SpeechSynthesizer` calls with: (a) translate OpenAI request → rich-endpoint internal call signature, (b) await the rich endpoint's service-layer function (not via HTTP), (c) translate the response back to OpenAI shape. Handler stays ≤30 LOC of translation per UAT-OA-03. | No (depends on T1) | READY-FOR-REVIEW | FR-OA-02, NFR-PT-03 |
-| 3 | Preserve OpenAI streaming end-to-end | Ensure `with_streaming_response.create(...)` still works: stream raw bytes through with OpenAI-expected `Content-Type`. Strip rich-endpoint-only headers (`X-Voice-Source`, `X-Chunks`, etc.) from the OpenAI response to keep the OpenAI contract intact per user constraint. | No (depends on T2) | READY-FOR-REVIEW | FR-OA-03, UAT-OA-02 |
-| 4 | Sync `GET /v1/models` to the rich-endpoint catalog | Make `/v1/models` enumerate the same `(provider, model)` pairs the rich endpoint accepts (driven from the provider registry + allow-lists, no duplicated lists). | Yes (with T3 — independent surface) | READY-FOR-REVIEW | FR-OA-04, UAT-OA-04 |
-| 5 | Tests: OpenAI request shape unchanged + adapter LOC + no-bypass | UAT-OA-01 (OpenAI request returns 200), UAT-OA-02 (SDK streaming), UAT-OA-03 (grep/AST check that the handler does not import or call `SpeechSynthesizer` directly — only the rich service-layer entry point), UAT-OA-04 (`/v1/models` matches catalog). | No (verifies T1–T4) | READY-FOR-REVIEW | FR-OA-01..04 |
+| 1 | Define the OpenAI→rich request mapping table | Document each OpenAI field (`model`, `input`, `voice`, `response_format`, `speed`, `stream`) → rich-endpoint field, including defaults applied for fields the OpenAI schema does not expose. Lives in the implementation notes so S-018 can pair against it. | No (foundation) | DONE | FR-OA-01, SRS §5 G-1 |
+| 2 | Refactor `POST /v1/audio/speech` handler to translate + delegate | Replace direct `SpeechSynthesizer` calls with: (a) translate OpenAI request → rich-endpoint internal call signature, (b) await the rich endpoint's service-layer function (not via HTTP), (c) translate the response back to OpenAI shape. Handler stays ≤30 LOC of translation per UAT-OA-03. | No (depends on T1) | DONE | FR-OA-02, NFR-PT-03 |
+| 3 | Preserve OpenAI streaming end-to-end | Ensure `with_streaming_response.create(...)` still works: stream raw bytes through with OpenAI-expected `Content-Type`. Strip rich-endpoint-only headers (`X-Voice-Source`, `X-Chunks`, etc.) from the OpenAI response to keep the OpenAI contract intact per user constraint. | No (depends on T2) | DONE | FR-OA-03, UAT-OA-02 |
+| 4 | Sync `GET /v1/models` to the rich-endpoint catalog | Make `/v1/models` enumerate the same `(provider, model)` pairs the rich endpoint accepts (driven from the provider registry + allow-lists, no duplicated lists). | Yes (with T3 — independent surface) | DONE | FR-OA-04, UAT-OA-04 |
+| 5 | Tests: OpenAI request shape unchanged + adapter LOC + no-bypass | UAT-OA-01 (OpenAI request returns 200), UAT-OA-02 (SDK streaming), UAT-OA-03 (grep/AST check that the handler does not import or call `SpeechSynthesizer` directly — only the rich service-layer entry point), UAT-OA-04 (`/v1/models` matches catalog). | No (verifies T1–T4) | DONE | FR-OA-01..04 |
 
 #### Acceptance Criteria
 - OpenAI-shaped request works unchanged (UAT-OA-01).
@@ -70,7 +70,7 @@ Pytest suite extended with: (a) OpenAI-shaped happy path against `TestClient`; (
 ---
 
 ### S-018: Byte-identity paired UAT (rich vs OpenAI)
-- **Status:** READY-FOR-REVIEW
+- **Status:** DONE
 - **Type:** Technical
 - **Parallel with:** None within this sprint
 - **Depends on (intra-sprint):** S-017
@@ -81,10 +81,10 @@ Pytest suite extended with: (a) OpenAI-shaped happy path against `TestClient`; (
 
 | # | Task | Purpose | Parallel | Status | Refs |
 |---|------|---------|----------|--------|------|
-| 1 | Build paired-request fixture | Construct an OpenAI-shaped request and the **equivalent** rich-endpoint request from the S-017 mapping table (Step 1, T1). Both go through the same warm-model code path. Same seed where the provider exposes one. | No (foundation) | READY-FOR-REVIEW | UAT-OA-05 |
-| 2 | Implement byte-identity assertion (strict path) | `sha256` of the audio body from each endpoint must match for at least one provider/model combo on warm load. Test marked deterministic — gate of the strict-equivalence claim. | No (depends on T1) | READY-FOR-REVIEW | NFR-PT-03b |
-| 3 | Implement relaxation path (RISK-8 fallback) | If a provider proves non-deterministic in CI, the test falls back to `±1 sample length + perceptual-hash threshold` per SRS §5 G-1. Relaxation threshold + rationale recorded in `docs/perf/baseline.md` (or sibling) and referenced from SRS §5. The strict path stays in CI for the deterministic provider/model. | No (depends on T2) | READY-FOR-REVIEW | RISK-8, SRS §5 G-1 |
-| 4 | Wire into CI as a deselected-by-default integration test that runs nightly OR a regular unit test if cheap | Decision driven by warm-model cost. Default: paired test runs in the standard unit suite if model load is already amortized by other tests; otherwise marked `@pytest.mark.integration` and run on a dedicated CI job. Document the decision in the implementation notes. | No (depends on T2/T3) | READY-FOR-REVIEW | UAT-OA-05 |
+| 1 | Build paired-request fixture | Construct an OpenAI-shaped request and the **equivalent** rich-endpoint request from the S-017 mapping table (Step 1, T1). Both go through the same warm-model code path. Same seed where the provider exposes one. | No (foundation) | DONE | UAT-OA-05 |
+| 2 | Implement byte-identity assertion (strict path) | `sha256` of the audio body from each endpoint must match for at least one provider/model combo on warm load. Test marked deterministic — gate of the strict-equivalence claim. | No (depends on T1) | DONE | NFR-PT-03b |
+| 3 | Implement relaxation path (RISK-8 fallback) | If a provider proves non-deterministic in CI, the test falls back to `±1 sample length + perceptual-hash threshold` per SRS §5 G-1. Relaxation threshold + rationale recorded in `docs/perf/baseline.md` (or sibling) and referenced from SRS §5. The strict path stays in CI for the deterministic provider/model. | No (depends on T2) | DONE | RISK-8, SRS §5 G-1 |
+| 4 | Wire into CI as a deselected-by-default integration test that runs nightly OR a regular unit test if cheap | Decision driven by warm-model cost. Default: paired test runs in the standard unit suite if model load is already amortized by other tests; otherwise marked `@pytest.mark.integration` and run on a dedicated CI job. Document the decision in the implementation notes. | No (depends on T2/T3) | DONE | UAT-OA-05 |
 
 #### Acceptance Criteria
 - Paired test exists and runs in CI.

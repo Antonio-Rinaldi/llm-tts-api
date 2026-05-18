@@ -8,7 +8,7 @@ Tracks sprints planned and their disposition.
 | 2 | Core services — async concurrency, model cache, error taxonomy, lifecycle | S-006, S-007, S-008, S-009, S-010, S-012 | DONE | 2026-05-17 | 2026-05-17 | 2026-05-18 |
 | 3 | Voice store — repositories, optional backends, CRUD, seed ingestion | S-022, S-023, S-024, S-025, S-011 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
 | 4 | Rich endpoint surface — synthesize + streaming + cancellation | S-013, S-015, S-016 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
-| 5 | OpenAI adapter + byte-identity equivalence | S-017, S-018 | READY-FOR-REVIEW | 2026-05-18 | 2026-05-18 | — |
+| 5 | OpenAI adapter + byte-identity equivalence | S-017, S-018 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-19 |
 
 ## Sprint 5 — summary
 
