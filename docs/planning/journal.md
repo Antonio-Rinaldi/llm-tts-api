@@ -326,6 +326,7 @@ Group E (cross-cutting polish, late)
 
 #### S-013: Rich endpoint `POST /v1/tts/synthesize`
 **Type:** User
+**Status:** PLANNED (Sprint 4)
 **Depends on:** S-006, S-007, S-008, S-009, S-011, S-012, S-025
 **Parallel group:** C
 **Refs:** FR-EP-01..05, NFR-MT-04, BR-1..4, BR-9, header inventory (SRS §5 C-2)
@@ -348,6 +349,7 @@ Group E (cross-cutting polish, late)
 
 #### S-015: Streaming response with headers/trailers
 **Type:** User
+**Status:** PLANNED (Sprint 4)
 **Depends on:** S-013
 **Parallel group:** C
 **Refs:** FR-EP-05, A-4, SRS §5 G-3 (trailer fallback)
@@ -361,6 +363,7 @@ Group E (cross-cutting polish, late)
 
 #### S-016: Client-disconnect cancellation
 **Type:** Technical
+**Status:** PLANNED (Sprint 4)
 **Depends on:** S-013, S-007
 **Parallel group:** C
 **Refs:** FR-CC-05

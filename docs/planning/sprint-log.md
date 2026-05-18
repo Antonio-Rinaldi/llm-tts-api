@@ -7,6 +7,19 @@ Tracks sprints planned and their disposition.
 | 1 | Foundation — observability, lifespan, hardware-aware bootstrap | S-001, S-002, S-003, S-004, S-005 | DONE | 2026-05-17 | 2026-05-17 | 2026-05-17 |
 | 2 | Core services — async concurrency, model cache, error taxonomy, lifecycle | S-006, S-007, S-008, S-009, S-010, S-012 | DONE | 2026-05-17 | 2026-05-17 | 2026-05-18 |
 | 3 | Voice store — repositories, optional backends, CRUD, seed ingestion | S-022, S-023, S-024, S-025, S-011 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
+| 4 | Rich endpoint surface — synthesize + streaming + cancellation | S-013, S-015, S-016 | PLANNED | 2026-05-18 | — | — |
+
+## Sprint 4 — summary
+
+**Objective:** ship `POST /v1/tts/synthesize` — the rich endpoint that consumes everything Sprints 1–3 built (voice store, provider auto-selection, concurrency, model cache, error envelope, config). Streaming responses with headers/trailers and client-disconnect cancellation round out the surface so Sprint 5's OpenAI adapter has a stable layer to translate to.
+
+**Composition:** 3 stories, 2 execution steps. Step 1: S-013 alone (foundation). Step 2: S-015 + S-016 in parallel (both extend S-013, touch different concerns — response-side streaming vs request-side cancellation).
+
+**Provability:** map-voice synthesis + full header inventory; streaming first-byte < half-duration; client-disconnect releases semaphores at next chunk boundary; existing `/v1/audio/speech` regression-free.
+
+**Risks:** S-013 size vs engineer session budget; Step-2 router-file conflicts; streaming×cancellation interaction; OpenAI endpoint regression during voice-resolution reshape.
+
+**Detail:** `docs/planning/sprints/sprint-4.md`.
 
 ## Sprint 3 — summary
 
