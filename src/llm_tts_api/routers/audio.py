@@ -48,8 +48,13 @@ STTDependency = Annotated[STTService, Depends(get_stt_service)]
 
 # Rich-endpoint-only response headers — stripped from the OpenAI adapter
 # path so the response shape stays OpenAI-identical (user constraint).
-# Kept in sync with `synthesize_service._RICH_ONLY_HEADER_KEYS` by the
-# byte-identity parity UAT (tests/test_openai_adapter_parity.py).
+# Intentionally a local frozenset literal rather than an import from
+# `synthesize_service`: the UAT-OA-03 static test pins this module to
+# import exactly `synthesize_core` from any `*synthesize*` module, so a
+# second symbol would fail that gate. The byte-identity parity UAT
+# (`tests/test_openai_adapter_parity.py`) is the safety net that catches
+# any divergence between this strip list and the headers populated by
+# `synthesize_service._synthesis_headers`.
 _RICH_ONLY_HEADERS: frozenset[str] = frozenset(
     {
         "x-provider",
