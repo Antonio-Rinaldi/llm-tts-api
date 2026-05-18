@@ -31,7 +31,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from llm_tts_api.services.voice_store import VoiceRecord
+from tests.fakes.seed_voice import seed_voice as _seed_voice
 
 _RICH_ONLY_HEADERS: frozenset[str] = frozenset(
     {
@@ -49,27 +49,6 @@ _RICH_ONLY_HEADERS: frozenset[str] = frozenset(
 
 def _run(coro: Any) -> Any:
     return asyncio.new_event_loop().run_until_complete(coro)
-
-
-async def _seed_voice(client: TestClient, *, voice_id: str = "alloy") -> VoiceRecord:
-    """Populate the in-memory fakes with a usable voice record + blob."""
-    state = client.app.state
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(2)
-        writer.setframerate(16000)
-        writer.writeframes(b"\x00\x00" * 16)
-    record = VoiceRecord(
-        id=voice_id,
-        transcript="ref text",
-        language="Italian",
-        consent_acknowledged=True,
-        source="crud",  # type: ignore[arg-type]
-    )
-    await state.voice_metadata_repo.create(record)
-    await state.voice_blob_repo.put(voice_id, buf.getvalue())
-    return record
 
 
 # ---------------------------------------------------------------------------

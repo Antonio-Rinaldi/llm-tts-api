@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final, Literal, NoReturn
 
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -158,10 +158,18 @@ def _make(
 
 
 def invalid_request(
-    message: str, param: str | None = None, code: str = "invalid_parameter"
+    message: str,
+    param: str | None = None,
+    code: str = "invalid_parameter",
+    status_code: int = 400,
 ) -> OpenAIHTTPException:
-    """Create a 400 ``validation_error`` (FR-ER-02)."""
-    return _make(400, type="validation_error", code=code, message=message, param=param)
+    """Create a ``validation_error`` (FR-ER-02); ``status_code`` allows 409-style conflicts."""
+    return _make(status_code, type="validation_error", code=code, message=message, param=param)
+
+
+def raise_not_implemented(endpoint: str) -> NoReturn:
+    """Raise the standard 501 ``not_implemented`` envelope for one endpoint."""
+    raise not_implemented(f"Endpoint '{endpoint}' is not implemented yet")
 
 
 def not_implemented(message: str) -> OpenAIHTTPException:

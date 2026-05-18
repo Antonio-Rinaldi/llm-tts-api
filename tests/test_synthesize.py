@@ -18,8 +18,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from llm_tts_api.services.voice_store import VoiceRecord
 from tests.fakes.fake_tts_provider import FakeTTSProvider
+from tests.fakes.seed_voice import seed_voice as _seed_voice
 
 _REQUIRED_HEADERS: frozenset[str] = frozenset(
     {
@@ -34,40 +34,6 @@ _REQUIRED_HEADERS: frozenset[str] = frozenset(
         "x-total-duration-ms",
     }
 )
-
-
-async def _seed_voice(
-    client: TestClient,
-    *,
-    voice_id: str = "alloy",
-    source: str = "crud",
-    language: str = "Italian",
-    target_db: float = -20.0,
-    max_sentences_per_chunk: int = 2,
-) -> VoiceRecord:
-    """Populate the in-memory fakes with a usable voice record + blob."""
-    state = client.app.state
-    # Tiny valid WAV so the temp file path resolves even though the fake
-    # provider never reads it.
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(2)
-        writer.setframerate(16000)
-        writer.writeframes(b"\x00\x00" * 16)
-    blob = buf.getvalue()
-    record = VoiceRecord(
-        id=voice_id,
-        transcript="ref text",
-        language=language,
-        consent_acknowledged=True,
-        target_db=target_db,
-        max_sentences_per_chunk=max_sentences_per_chunk,
-        source=source,  # type: ignore[arg-type]
-    )
-    await state.voice_metadata_repo.create(record)
-    await state.voice_blob_repo.put(voice_id, blob)
-    return record
 
 
 def _run(coro: Any) -> Any:
