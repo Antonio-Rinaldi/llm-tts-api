@@ -12,9 +12,9 @@
 
 | Metric | Value |
 |---|---|
-| Total stories | 24 |
+| Total stories | 25 |
 | User stories | 9 |
-| Technical stories | 15 |
+| Technical stories | 16 |
 | Parallel groups | 5 (A–E) |
 | Critical path length | 8 stories (A → B → B' → C → D → E) |
 | Functional areas covered | 13/13 (SRS §4.1–4.13) |
@@ -59,6 +59,7 @@ Group E (cross-cutting polish, late)
    S-019 Documentation refresh (README/diagrams/OpenAPI) ← all features stabilised
    S-020 Dockerfile + CI docker build update             ← S-012, S-010
    S-021 Performance validation against baseline         ← all features
+   S-026 Code-duplication refactor (cycle-end cleanup)   ← S-019, S-020, S-021
 ```
 
 ---
@@ -409,6 +410,7 @@ Group E (cross-cutting polish, late)
 
 #### S-019: Documentation refresh
 **Type:** Technical
+**Status:** PLANNED (Sprint 6)
 **Depends on:** S-006..S-017 (substance complete enough to document)
 **Parallel group:** E
 **Refs:** FR-DC-01..03, NFR-MT-06, NFR-CP-01, NFR-PV-04
@@ -423,6 +425,7 @@ Group E (cross-cutting polish, late)
 
 #### S-020: Dockerfile + CI docker build update
 **Type:** Technical
+**Status:** PLANNED (Sprint 6)
 **Depends on:** S-012, S-010, S-011
 **Parallel group:** E
 **Refs:** NFR-OP-02, FR-QG-04
@@ -437,6 +440,7 @@ Group E (cross-cutting polish, late)
 
 #### S-021: Performance validation against baseline
 **Type:** Technical
+**Status:** PLANNED (Sprint 6)
 **Depends on:** S-002, S-007, S-013, S-017 (feature surface stable)
 **Parallel group:** E
 **Refs:** NFR-PF-01..04, RISK-2
@@ -446,6 +450,23 @@ Group E (cross-cutting polish, late)
 - `/health` p95 ≤50 ms during in-flight synthesis (NFR-PF-02 / UAT-CC-02).
 - Concurrent-throughput check (UAT-CC-01) passes within ±20%.
 - Post-cycle numbers and date appended to `docs/perf/baseline.md`.
+
+---
+
+#### S-026: Code-duplication refactor (cycle-end cleanup)
+**Type:** Technical
+**Status:** PLANNED (Sprint 6)
+**Depends on:** S-019, S-020, S-021 (all production code, docs, and validation complete first)
+**Parallel group:** E (sequential terminal — runs AFTER the rest of Sprint 6)
+**Refs:** NFR-MT-01..04, BR-9, NFR-PT-03
+**Description:** End-of-cycle duplication sweep. With all production code, docs, and perf validation in place, identify and consolidate accidental duplication that accumulated during incremental sprints (1–6): repeated header inventories, parallel error-construction sites, voice-store path-validation copies, provider-allow-list scattering, test fixture duplication across routers, etc. **Constraint: behavior-preserving only.** Every test passing before this story must pass after, byte-for-byte where audio is involved (S-018 paired UAT is the gate). No new features, no API surface changes, no schema changes. The output is a smaller, more uniform codebase with the same observable behavior — measured by: (a) net LOC reduction in `src/llm_tts_api/`, (b) zero new mypy errors, (c) zero test changes other than removing tests that became redundant by construction (and only with explicit justification per removal), (d) S-018 byte-identity test continues to pass unchanged.
+**Acceptance criteria:**
+- Net production LOC reduction ≥ 3% vs pre-refactor master (measured `tokei` or `cloc` on `src/llm_tts_api/`).
+- All gates green: ruff, ruff format, `mypy --strict src/`, `pytest`, `pip-audit`.
+- S-018 byte-identity paired UAT passes unchanged.
+- No new dependencies introduced.
+- No public API or response-shape changes (`docs/openapi/openapi.yaml` byte-identical OR diff is purely cosmetic — comments, ordering — with explicit justification).
+- Per-consolidation rationale recorded in implementation notes (what was duplicated, where it lives now, what behavior is preserved).
 
 ---
 

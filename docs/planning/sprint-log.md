@@ -9,6 +9,19 @@ Tracks sprints planned and their disposition.
 | 3 | Voice store — repositories, optional backends, CRUD, seed ingestion | S-022, S-023, S-024, S-025, S-011 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
 | 4 | Rich endpoint surface — synthesize + streaming + cancellation | S-013, S-015, S-016 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
 | 5 | OpenAI adapter + byte-identity equivalence | S-017, S-018 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-19 |
+| 6 | Cycle close-out — docs, container, perf validation, dedup | S-019, S-020, S-021, S-026 | PLANNED | 2026-05-19 | — | — |
+
+## Sprint 6 — summary
+
+**Objective:** close the cycle by proving the implementation against its own contract from the outside in (docs, container, perf) and shipping a polished, dedup'd codebase.
+
+**Composition:** 4 stories, 2 execution steps. Step 1: S-019 (docs refresh — README + diagrams + OpenAPI, quality-matched to llm-image-api/docs layout) + S-020 (Dockerfile default + CUDA variant + CI smoke) + S-021 (perf re-baseline vs S-002, ≤+10% regression budget) in parallel. Step 2: S-026 (behavior-preserving code-duplication refactor — ≥3% net LOC reduction, gated by S-018 byte-identity UAT) alone.
+
+**Provability:** all Sprint-1 quality gates green; CI builds + smokes both Docker variants; perf numbers within +10% of S-002 baseline; post-refactor LOC down ≥3% with S-018 paired UAT unchanged.
+
+**Risks:** S-002 baseline numbers may still be `_pending_` — S-021 T1 captures Sprint-1 numbers first so the regression check is internally consistent; CI docker daemon availability; S-026 LOC reduction may be modest — inventory phase records candidates first; S-026 byte-identity gate prevents silent regression.
+
+**Detail:** `docs/planning/sprints/sprint-6.md`.
 
 ## Sprint 5 — summary
 
