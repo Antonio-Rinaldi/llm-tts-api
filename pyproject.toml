@@ -16,6 +16,8 @@ dependencies = [
   "num2words>=0.5.14",
   "mlx-audio>=0.4.2",
   "psutil>=5.9.0",
+  # S-025: voice-CRUD endpoints accept multipart/form-data uploads.
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

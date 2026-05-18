@@ -115,6 +115,8 @@ class Settings:
     tts_voice_blob_s3_bucket: str = ""
     # AWS region; empty means "let aiobotocore resolve via env/config".
     tts_voice_blob_s3_region: str = ""
+    # S-025 — per-upload hard cap for voice-CRUD audio (NFR-SE-01). Default 10 MiB.
+    tts_refaudio_max_bytes: int = 10 * 1024 * 1024
 
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
@@ -126,6 +128,9 @@ class Settings:
         self._load_voice_store_dir()
         self._load_voice_metadata_backend()
         self._load_voice_blob_backend()
+        self.tts_refaudio_max_bytes = self._load_int(
+            "TTS_REFAUDIO_MAX_BYTES", self.tts_refaudio_max_bytes, minimum=1
+        )
         self.tts_voice_map = self._load_voice_map_from_file()
 
     def _load_voice_store_dir(self) -> None:
