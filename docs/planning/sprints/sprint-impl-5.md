@@ -10,7 +10,7 @@ completes in its isolated worktree. Companion to `sprint-5.md`.
 | S-017 | User | READY-FOR-REVIEW | sprint-5-S-017 (merged) |
 | S-018 | Technical | READY-FOR-REVIEW | sprint-5-S-018 (merged) |
 
-Sprint 5 status: All stories READY-FOR-REVIEW; pending story + sprint reviews.
+Sprint 5 status: Complete — reviewed.
 
 ---
 
@@ -640,4 +640,287 @@ Spot-checked: `tests/test_openai_adapter_parity.py` passes (3/3) in 0.18 s again
 ## Recommendation
 
 Approve. No fixes required.
+
+
+---
+
+# Sprint 5 — Sprint-Level Review
+
+**Scope:** Phase 1P cross-story coherence for Sprint 5 (S-017 OpenAI adapter as
+thin translator; S-018 byte-identity paired UAT). Story-level reviews are
+already recorded in `sprint-impl-5.md` and are not re-litigated here — this
+document looks only at the interactions **between** the two stories and at
+their interaction with the earlier sprints' surfaces (S-013 rich endpoint,
+S-015 streaming/trailers, S-016 client-disconnect cancellation, lifespan +
+app.state from sprints 1–3, voice store + error envelope from sprint 2).
+
+**Verdict: APPROVED — no cross-story fixes required.** Gates re-run on the
+review worktree: `pytest` **375 passed / 2 skipped / 3 deselected / 1 xfailed**,
+`mypy --strict src/` clean across **52 source files**. Observations below are
+non-blocking and recorded so the next sprint inherits a known surface.
+
+---
+
+## 1. Shared infrastructure — does Sprint 5 sit cleanly on Sprints 1–4?
+
+### 1.1 Lifespan + `app.state` (Sprints 1–2)
+
+`synthesize_core` reads `request.app.state.queue_semaphore`,
+`request.app.state.concurrency_semaphore`, and
+`request.app.state.model_locks` (`services/synthesize_service.py:279–281,
+395–422`). These are exactly the names that the lifespan startup sequence
+populates — no rename, no shadow state. The OpenAI handler resolves the
+same `app.state` via the `Request` object it forwards, so the two routers
+share **one** semaphore pair and **one** lock map. There is no second copy
+of the admission state introduced by S-017.
+
+### 1.2 Error envelope (Sprint 2)
+
+Both paths raise the `OpenAIHTTPException`-based envelope via `errors.py`
+helpers (`invalid_request`, `voice_error`, `capacity_error`,
+`internal_error`). The OpenAI adapter deliberately does **not** translate
+envelopes — FR-OA-02 — and `synthesize_core` re-raises `OpenAIHTTPException`
+verbatim before the generic `Exception` catch (`synthesize_service.py:464`).
+This means the one observable contract change recorded in S-017's story
+review (`unmapped voice → 404 voice_not_found` instead of the old
+`400 validation_error`) is the rich envelope reaching the OpenAI client
+unmodified — correct by construction, not a regression in the cross-story
+sense.
+
+### 1.3 Voice store (Sprint 2)
+
+`_resolve_voice` is the single entry point for `voice_metadata_repo` +
+`voice_blob_repo` (`synthesize_service.py:237–264`). Both paths read the
+same `VoiceRecord`. S-018's paired test seeds **one** record under the
+shared in-memory repos and dispatches both endpoints against it
+(`tests/test_openai_adapter_parity.py:54–71, 115–134`); this directly
+exercises the shared-store invariant rather than asserting it indirectly.
+
+### 1.4 Concurrency model (Sprint 3)
+
+Buffered and streaming branches now both pull `queue_sem`, `concur_sem`,
+and `model_locks` from `app.state` and follow the same acquire-order. The
+**only** divergence from pre-S-017 code is that the streaming path now
+also goes through `synthesize_core` instead of through the synthesize
+router directly — the admission discipline itself is unchanged. See §3.1
+for the pre-existing CC-coverage shape (carried forward from S-017's
+story review O-1).
+
+---
+
+## 2. Integration boundary — `synthesize_core` as the single funnel
+
+### 2.1 Single-pipeline invariant (BR-9) is structural
+
+`routers/audio.py` imports **only** `synthesize_core` from the synthesis
+surface (`routers/audio.py:37`); no import of `SpeechSynthesizer` or
+`routers.synthesize`. AST-pinned by `tests/test_openai_adapter.py`'s
+`test_audio_router_has_no_speech_synthesizer_imports` +
+`test_audio_router_imports_synthesize_core_only`. `routers/synthesize.py`
+is now a thin wrapper that re-exports back-compat helpers and delegates
+to `synthesize_core` (per `sprint-impl-5.md` § Files changed). The two
+handlers are the **only** two callers of `synthesize_core` in `src/`.
+
+### 2.2 Handler-side dependency injection is uniform
+
+Both handlers resolve their FastAPI `Depends` graph and pass it as plain
+keyword arguments to `synthesize_core`
+(`audio.py:138–148` vs the wrapper in `routers/synthesize.py`). No HTTP
+indirection, no `request.app.state.tts_service` access in the new path.
+This makes the boundary clean to mock in tests and matches the "service-
+layer function, not via HTTP" wording of S-017 T2.
+
+### 2.3 S-018 pins the cross-cutting invariant the right way
+
+The paired byte-identity test (`tests/test_openai_adapter_parity.py`)
+runs both endpoints against the same in-memory state and asserts
+`sha256(body)` equality. The load-bearing assertion is **"both endpoints
+route through `synthesize_core` and therefore exercise the same chunking
+/ WAV emission"** — exactly the cross-cutting invariant that the
+single-funnel refactor (S-017) is meant to deliver. Three guards prevent
+"passes for the wrong reason":
+
+1. Status-code assertion on both responses (rules out paired 4xx/5xx).
+2. `content-type == "audio/wav"` on both (rules out paired JSON envelopes).
+3. The sibling `test_paired_bodies_match_even_with_rich_header_difference`
+   confirms the header-strip is real and that body equality is body-only.
+
+The strict path is the contract; the relaxed path (RISK-8 fallback) is
+code-exercised, not dormant — `_RELAX_SAMPLE_TOLERANCE` / `_RELAX_PHASH_DISTANCE`
+are pinned in the test and in `docs/perf/baseline.md`.
+
+---
+
+## 3. Behavioral interactions — does S-017's refactor regress S-013 / S-015 / S-016?
+
+### 3.1 S-016 client-disconnect cancellation — preserved on the buffered path; pre-existing gap on the streaming path
+
+The buffered path's `is_disconnected()` probe sits at
+`synthesize_service.py:296–308`, identical placement to the pre-S-017
+implementation in `routers/synthesize.py` (`cb4e275`). The `CancelledError`
+re-raise + `BaseException`-style unwinding (verified in Sprint 4 review)
+still holds because the surrounding `async with concur_sem` /
+`async with lock` / `try/finally: queue_sem.release()` blocks are
+preserved verbatim around the loop.
+
+**Cross-sprint gap (pre-existing, NOT introduced by S-017):**
+`_stream_synthesis_chunks` (S-015's streaming generator) does **not**
+contain an `is_disconnected()` probe. It was added in S-015 (`7122aaa`)
+without a probe, and S-016 (`cb4e275`) added the probe only to
+`_run_synthesis`. S-017 moved both functions verbatim into
+`services/synthesize_service.py`. Net effect: streaming clients can still
+not cancel mid-stream by hanging up. This is the same behaviour the
+codebase has had since S-015 landed; flagging it here because a sprint-
+level reading is the natural place to notice that FR-CC-05 only binds the
+buffered path.
+
+**Recommended follow-up (next sprint):** add an `is_disconnected()` probe
+at the top of the `for chunk_text in chunks:` loop inside
+`_stream_synthesis_chunks` (line 211), mirroring the buffered probe at
+line 296. Pair with a TestClient-friendly unit test that drives
+`_stream_synthesis_chunks` directly with a stub `Request` whose
+`is_disconnected()` flips after one chunk.
+
+### 3.2 S-015 streaming + trailer emission — correctly bypassed on the OpenAI path
+
+`_TrailerStreamingResponse.__call__` is the only code that emits
+`http.response.trailers`. On the OpenAI path, `_openai_response` discards
+the rich response entirely and constructs a **fresh** plain
+`StreamingResponse` over the inner `body_iterator`
+(`routers/audio.py:112–118`). The `_TrailerStreamingResponse` instance is
+never invoked, so trailer emission cannot leak to OpenAI clients even on
+HTTP/1.1 transports that advertise `TE: trailers`. Pinned by
+`test_openai_speech_streaming_drains_chunked_bytes`.
+
+Critically, the rewrap **preserves the generator object itself**.
+`_stream_synthesis_chunks` owns `queue_sem.release()` and the temp-file
+`os.remove()` in its `finally` block (`synthesize_service.py:231–234`).
+Rewrapping in a plain `StreamingResponse` does not create a new generator;
+it just installs a different ASGI sender. The generator's `finally` runs
+on exhaustion or on close-on-cancellation, so the semaphore + temp-file
+release contract from S-015 is intact on the OpenAI path. (This is
+worth recording explicitly because rewrap-style refactors are a common
+source of lifecycle bugs; the structure here is correct.)
+
+### 3.3 S-013 rich endpoint contract — unchanged
+
+The rich endpoint still returns the full FR-EP-04 header inventory
+(`X-Request-ID`, `X-Provider`, `X-Model`, `X-Device`, `X-Dtype`,
+`X-Voice-Source`, `X-Voice-Id`, `X-Chunks`, `X-Total-Duration-Ms`) and
+still routes through the same validation funnel. The 280-test pre-Sprint-5
+suite remains green on the post-Sprint-5 tree (375 total, 360 of which
+predate Sprint 5). No rich-endpoint test was modified for behavioural
+reasons — the two tests touched in `tests/test_synthesize.py` and
+`tests/test_audio_speech.py` were monkeypatch-target re-pointings and an
+envelope-expectation update for the unmapped-voice path (FR-OA-02
+consequence noted above).
+
+### 3.4 Trailer-stripping × HTTP/1.1 trailers interaction
+
+There is no interaction. The OpenAI adapter strips the **header-set**
+inventory by rewrap (streaming) or by `del inner.headers[key]` (buffered),
+and trailer emission is structurally unreachable on the OpenAI path
+because `_TrailerStreamingResponse.__call__` is never the ASGI app
+invoked. The user constraint "no `X-Chunks` / `X-Total-Duration-Ms` leak
+on the OpenAI path" therefore holds for **both** headers-only and
+header-via-trailer transports.
+
+---
+
+## 4. Regression risk — do the combined Sprint 5 changes break earlier sprints?
+
+### 4.1 Test counts (objective)
+
+| Sprint boundary | passed | skipped | xfailed |
+|-----------------|--------|---------|---------|
+| End of Sprint 4 (`5ce0f22~6`) | 360 | 2 | 1 |
+| End of S-017 (`73bca07`) | 372 | 2 | 1 |
+| End of S-018 (`f1fa9e5`) | 375 | 2 | 1 |
+| Review worktree (re-run today) | **375** | **2** | **1** |
+
+The +12 / +3 deltas correspond exactly to the new files
+`tests/test_openai_adapter.py` and `tests/test_openai_adapter_parity.py`.
+**No earlier-sprint test was skipped, xfailed, or deleted as a side
+effect of the refactor.** mypy --strict count: 51 → 52 source files
+(`services/synthesize_service.py` is the only addition).
+
+### 4.2 Subjective regression surface
+
+- **`tests/test_concurrency.py`** still drives `TTSService.create_speech`
+  directly. S-017's story review (O-1) and `sprint-impl-5.md` both call
+  this out. The CC-01 / CC-03 / per-model-lock invariants are validated
+  against a code path that no router reaches in production after S-017.
+  This is a coverage **shape** issue, not a correctness regression: both
+  implementations agree by construction today. Sprint-level recommendation:
+  open a backlog story (e.g. `S-019: re-bind UAT-CC-01/CC-03 to live
+  synthesis path`) before any future refactor in `services/tts_service.py`.
+
+- **Streaming byte-identity is not pinned by S-018.** The paired test
+  exercises only the buffered path (no `?stream=true`). The streaming
+  bodies should also be byte-identical (same `body_iterator`, same
+  generator), but the contract is not pinned by a test. Non-blocking;
+  a single extra paired test (`?stream=true` on both sides, drain via
+  `client.stream(...).iter_bytes()`) would close it. Could be folded into
+  S-021 perf revalidation work in Sprint 6.
+
+- **Threshold coupling (S-018 T3) is documentation-only.** `_RELAX_*`
+  constants in `test_openai_adapter_parity.py` and the matching numbers
+  in `docs/perf/baseline.md` will drift silently if edited independently.
+  S-018's own story review already records this; sprint-level it is
+  worth a single shared module if S-021 starts editing the relaxation
+  contract.
+
+### 4.3 No new external dependencies
+
+Both stories ship without adding a runtime or test dependency. S-018's
+relaxation path uses stdlib `hashlib.blake2b` + `wave` only.
+`pip-audit` remained clean across both merges.
+
+---
+
+## 5. Sprint-level strengths worth recording
+
+1. **The single-funnel refactor is structural, not behavioural.** S-017
+   moved code; it did not rewrite the synthesis pipeline. Combined with
+   the AST pin + 30-LOC budget + S-018's body-equality test, the
+   single-pipeline invariant (BR-9) is now defended at three independent
+   layers: source-text structure, code-shape budget, and runtime byte
+   equality.
+2. **S-018 is the right shape for what it's pinning.** A unit-level
+   paired test on a deterministic provider gates the contract
+   on every run; the real-provider variant is correctly deferred to
+   S-021 with a documented relaxation policy. The story does not pretend
+   to defend against non-deterministic providers in CI — it pins the
+   invariant where it can be pinned deterministically.
+3. **The header-strip surface is enumerable.** `_RICH_ONLY_HEADERS` is
+   one frozenset in one file (`routers/audio.py:51–62`), referenced once
+   in `_openai_response` and once in `tests/test_openai_adapter.py`. A
+   future header addition will either be in the strip set or be
+   intentionally exposed; there is no third option.
+
+---
+
+## 6. Files touched on this review worktree
+
+None. The sprint-level review found no cross-story coherence issue that
+required a code fix.
+
+---
+
+## 7. Open items handed to the next sprint
+
+| # | Item | Origin | Suggested owner |
+|---|------|--------|-----------------|
+| 1 | Add `is_disconnected()` probe to `_stream_synthesis_chunks` (close FR-CC-05 on streaming path) | §3.1 | Sprint 6 backlog (or S-019 if opened separately) |
+| 2 | Re-bind UAT-CC-01 / UAT-CC-03 / per-model-lock invariants to the live `synthesize_core` admission path | §4.2, S-017 O-1 | Sprint 6 backlog (S-019 candidate) |
+| 3 | Pin streaming byte-identity (`?stream=true` paired) | §4.2 | Fold into S-021 |
+| 4 | Single source of truth for relaxation thresholds (test constants + baseline.md) | §4.2, S-018 minor obs | Fold into S-021 if S-021 edits baseline.md |
+
+## 8. Final verdict
+
+**APPROVED.** Sprint 5 cleanly delivers the single-synthesis-pipeline goal
+(BR-9 resolved by construction; NFR-PT-03b empirically pinned). The two
+stories compose without regression; gates green; mypy strict; no new
+deps. The four open items above are coverage / completeness work for
+Sprint 6, not defects in Sprint 5 as delivered.
 
