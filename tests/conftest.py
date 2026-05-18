@@ -70,6 +70,7 @@ def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TTS_VOICE_METADATA_BACKEND",
         "TTS_VOICE_METADATA_DSN",
         "TTS_REFAUDIO_MAX_BYTES",
+        "TTS_VOICE_MAP_WATCH_FORCE_POLLING",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -165,6 +166,15 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
 
     app_state.voice_metadata_repo = FakeVoiceMetadataRepository()  # type: ignore[attr-defined]
     app_state.voice_blob_repo = FakeVoiceBlobRepository()  # type: ignore[attr-defined]
+    # S-011 voice seed ingestor — constructed with no seed path so it is a
+    # no-op for tests that don't exercise voice-map ingestion explicitly.
+    from llm_tts_api.services.voice_store import VoiceSeedIngestor
+
+    app_state.voice_seed_ingestor = VoiceSeedIngestor(  # type: ignore[attr-defined]
+        metadata_repo=app_state.voice_metadata_repo,  # type: ignore[attr-defined]
+        blob_repo=app_state.voice_blob_repo,  # type: ignore[attr-defined]
+        seed_file_path=None,
+    )
     # S-010: ready-flag default for the happy-path fixture. UAT-HL-02 toggles
     # this directly in test bodies that need the not-ready path.
     app_state.ready = True  # type: ignore[attr-defined]

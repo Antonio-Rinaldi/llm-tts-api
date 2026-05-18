@@ -151,6 +151,7 @@ def create_app() -> FastAPI:
         whatever fakes/stubs it needs.
         """
         drain_seconds = 0
+        seed_watcher_task: asyncio.Task[None] | None = None
         try:
             if not _test_bypass_active():
                 deps = build_default_dependencies()
@@ -171,6 +172,17 @@ def create_app() -> FastAPI:
                 # ingestion via Depends(get_voice_metadata_repo/_blob_repo).
                 app.state.voice_metadata_repo = deps.voice_metadata_repo
                 app.state.voice_blob_repo = deps.voice_blob_repo
+                # S-011 — initial seed pass before serving traffic so
+                # /v1/tts/voices reflects the file's contents post-warmup
+                # (UAT-VM-01). Then spawn the watchfiles task to honour
+                # NFR-OP-05 (~2s hot reload on edits).
+                app.state.voice_seed_ingestor = deps.voice_seed_ingestor
+                await deps.voice_seed_ingestor.ingest_once()
+                if deps.voice_seed_ingestor.seed_file_path is not None:
+                    seed_watcher_task = asyncio.create_task(
+                        deps.voice_seed_ingestor.watch_and_ingest(),
+                        name="voice-seed-watcher",
+                    )
                 _emit_low_memory_warning(deps.settings.tts_min_free_memory_gb)
                 drain_seconds = deps.settings.tts_shutdown_drain_seconds
                 app.state.ready = True
@@ -179,6 +191,12 @@ def create_app() -> FastAPI:
         finally:
             app.state.ready = False
             app.state.ready_reason = "draining"
+            if seed_watcher_task is not None:
+                seed_watcher_task.cancel()
+                import contextlib
+
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await seed_watcher_task
             if drain_seconds > 0:
                 await _drain_concurrency(app, drain_seconds)
 
