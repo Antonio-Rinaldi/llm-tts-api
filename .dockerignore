@@ -1,0 +1,45 @@
+# S-020 T4 — keep build context lean and the final image small.
+.git/
+.gitignore
+.github/
+.worktrees/
+.venv/
+.idea/
+.vscode/
+
+# Local caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Tests + planning are not shipped in the runtime image
+tests/
+docs/
+plans/
+docs/planning/
+docs/planning/sprints/.pending/
+
+# Operational scratch
+var/
+.pending/
+voices/
+resources/
+
+# Local-only env / config overrides
+.env
+.env.local
+config/voice_map.local.json
+
+# Build artefacts
+dist/
+build/
+*.egg-info/
+
+# OS junk
+.DS_Store
+Thumbs.db
