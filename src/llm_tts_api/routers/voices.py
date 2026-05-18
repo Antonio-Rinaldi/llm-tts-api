@@ -32,7 +32,7 @@ from llm_tts_api.dependencies import (
     get_voice_blob_repo,
     get_voice_metadata_repo,
 )
-from llm_tts_api.errors import invalid_request, voice_error
+from llm_tts_api.errors import OpenAIError, OpenAIHTTPException, invalid_request, voice_error
 from llm_tts_api.schemas.voices import (
     VoiceCreate,
     VoiceListResponse,
@@ -220,10 +220,14 @@ async def create_voice(
     try:
         created = await repo.create(record)
     except VoiceAlreadyExistsError as exc:
-        raise invalid_request(
-            f"voice id {payload.id!r} already exists",
-            param="id",
-            code="voice_id_exists",
+        raise OpenAIHTTPException(
+            status_code=409,
+            error=OpenAIError(
+                message=f"voice id {payload.id!r} already exists",
+                type="validation_error",
+                code="voice_id_exists",
+                param="id",
+            ),
         ) from exc
     except VoiceIdInvalidError as exc:
         raise invalid_request(str(exc), param="id", code="invalid_parameter") from exc

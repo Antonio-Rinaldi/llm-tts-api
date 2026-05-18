@@ -86,7 +86,7 @@ def test_duplicate_id_returns_400_uat_vs_03(client: TestClient) -> None:
     first = _post_voice(client)
     assert first.status_code == 201
     second = _post_voice(client)
-    assert second.status_code == 400
+    assert second.status_code == 409
     assert second.json()["error"]["code"] == "voice_id_exists"
 
 

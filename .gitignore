@@ -15,3 +15,4 @@ voices/
 # sprint-coordinator scratch space (per-task worktrees + cross-process coordination files)
 .worktrees/
 docs/planning/sprints/.pending/
+.coverage
