@@ -37,7 +37,7 @@ class FakeTTSService:
     stream_payload: bytes = b"FAKE-WAV-BYTES"
     calls: list[tuple[SpeechRequest, bool]] = field(default_factory=list)
 
-    def create_speech(
+    async def create_speech(
         self, request: SpeechRequest, stream: bool = False
     ) -> FileResponse | StreamingResponse:
         """Pretend to synthesize speech; return a stub WAV response."""

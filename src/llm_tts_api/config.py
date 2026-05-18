@@ -59,6 +59,7 @@ class Settings:
     tts_voice_map: dict[str, VoiceConfig] = field(default_factory=dict)
     tts_max_input_chars: int = 4096
     tts_max_concurrent_requests: int = 1
+    tts_max_queue_depth: int = 8
 
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
@@ -154,6 +155,15 @@ class Settings:
             self.tts_max_concurrent_requests = max(1, int(max_req_raw))
         except ValueError as exc:
             raise ValueError("TTS_MAX_CONCURRENT_REQUESTS must be an integer >= 1") from exc
+
+        max_queue_raw = os.getenv("TTS_MAX_QUEUE_DEPTH", str(self.tts_max_queue_depth)).strip()
+        try:
+            queue_depth = int(max_queue_raw)
+        except ValueError as exc:
+            raise ValueError("TTS_MAX_QUEUE_DEPTH must be an integer >= 1") from exc
+        if queue_depth < 1:
+            raise ValueError("TTS_MAX_QUEUE_DEPTH must be an integer >= 1")
+        self.tts_max_queue_depth = queue_depth
 
     def _load_voice_map_from_file(self) -> dict[str, VoiceConfig]:
         """Load and validate all configured voices from ``TTS_VOICE_MAP_FILE``."""

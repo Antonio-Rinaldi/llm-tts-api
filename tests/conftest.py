@@ -103,6 +103,7 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     settings.tts_voice_map = {}
     settings.tts_max_input_chars = 4096
     settings.tts_max_concurrent_requests = 1
+    settings.tts_max_queue_depth = 8
 
     app_state.settings = settings  # type: ignore[attr-defined]
     app_state.device_profile = DeviceProfile(  # type: ignore[attr-defined]
@@ -112,6 +113,16 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     app_state.provider_registry = TTSProviderRegistry(providers=[])  # type: ignore[attr-defined]
     app_state.tts_service = fake_tts  # type: ignore[attr-defined]
     app_state.stt_service = STTService()  # type: ignore[attr-defined]
+    # S-007: stub the concurrency primitives that S-010 (/health) will read.
+    import asyncio
+
+    app_state.concurrency_semaphore = asyncio.Semaphore(  # type: ignore[attr-defined]
+        settings.tts_max_concurrent_requests
+    )
+    app_state.queue_semaphore = asyncio.Semaphore(  # type: ignore[attr-defined]
+        settings.tts_max_queue_depth
+    )
+    app_state.model_locks = {}  # type: ignore[attr-defined]
 
 
 @pytest.fixture

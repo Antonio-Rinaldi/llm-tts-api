@@ -12,7 +12,8 @@ The Depends-shape getters here read from ``request.app.state.*``. A separate
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from typing import cast
 
 from fastapi import Request
@@ -25,7 +26,7 @@ from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSPro
 from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 from llm_tts_api.services.tts_providers.vllm_omni_provider import VllmOmniTTSProvider
 from llm_tts_api.services.tts_providers.voxtral_provider import VoxtralTTSProvider
-from llm_tts_api.services.tts_service import TTSService
+from llm_tts_api.services.tts_service import ModelLockMap, TTSService
 
 
 @dataclass(slots=True)
@@ -44,6 +45,9 @@ class AppDependencies:
     provider_registry: TTSProviderRegistry
     tts_service: TTSService
     stt_service: STTService
+    concurrency_semaphore: asyncio.Semaphore
+    queue_semaphore: asyncio.Semaphore
+    model_locks: ModelLockMap = field(default_factory=dict)
 
 
 def build_default_dependencies() -> AppDependencies:
@@ -63,10 +67,20 @@ def build_default_dependencies() -> AppDependencies:
             VllmOmniTTSProvider(),
         ]
     )
+    # S-007 concurrency primitives: queue admission, active cap, per-model locks.
+    # Constructed here so a single shared graph flows into both the TTSService
+    # (which consumes them at request time) and ``app.state`` slots (which
+    # S-010 / health & ready endpoints will read).
+    concurrency_semaphore = asyncio.Semaphore(settings.tts_max_concurrent_requests)
+    queue_semaphore = asyncio.Semaphore(settings.tts_max_queue_depth)
+    model_locks: ModelLockMap = {}
     tts_service = TTSService(
         settings=settings,
         model_registry=model_registry,
         provider_registry=provider_registry,
+        concurrency_semaphore=concurrency_semaphore,
+        queue_semaphore=queue_semaphore,
+        model_locks=model_locks,
     )
     stt_service = STTService()
     return AppDependencies(
@@ -76,6 +90,9 @@ def build_default_dependencies() -> AppDependencies:
         provider_registry=provider_registry,
         tts_service=tts_service,
         stt_service=stt_service,
+        concurrency_semaphore=concurrency_semaphore,
+        queue_semaphore=queue_semaphore,
+        model_locks=model_locks,
     )
 
 
