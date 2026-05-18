@@ -5,6 +5,18 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+_VALID_DEVICES: frozenset[str] = frozenset({"auto", "mps", "cuda", "cpu"})
+_VALID_DTYPES: frozenset[str] = frozenset({"auto", "float16", "bfloat16", "float32"})
+_VALID_LOG_FORMATS: frozenset[str] = frozenset({"text", "json"})
+
+
+@dataclass(frozen=True, slots=True)
+class PreloadEntry:
+    """One ``provider:model`` pair from ``TTS_PRELOAD_MODELS``."""
+
+    provider: str
+    model: str
+
 
 @dataclass(slots=True)
 class VoiceConfig:
@@ -60,12 +72,25 @@ class Settings:
     tts_max_input_chars: int = 4096
     tts_max_concurrent_requests: int = 1
 
+    # S-012 — runtime knobs introduced for Sprint 2 stories. Parsing /
+    # validation lives in ``_load_runtime_knobs`` below; defaults here are
+    # the conservative single-process values used when env is unset.
+    tts_device: str = "auto"
+    tts_dtype: str = "auto"
+    tts_max_queue_depth: int = 8
+    tts_model_cache_size: int = 1
+    tts_preload_models: list[PreloadEntry] = field(default_factory=list)
+    tts_inference_timeout_seconds: float | None = None
+    tts_shutdown_drain_seconds: int = 30
+    app_log_format: str = "text"
+
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
         self._load_app_identity()
         self._load_provider_models()
         self._load_stt_models()
         self._load_tts_limits()
+        self._load_runtime_knobs()
         self.tts_voice_map = self._load_voice_map_from_file()
 
     @staticmethod
@@ -174,6 +199,138 @@ class Settings:
             self.tts_max_concurrent_requests = max(1, int(max_req_raw))
         except ValueError as exc:
             raise ValueError("TTS_MAX_CONCURRENT_REQUESTS must be an integer >= 1") from exc
+
+    def _load_runtime_knobs(self) -> None:
+        """Parse and validate Sprint-2 runtime env vars (FR-CF-01..03).
+
+        Validation policy:
+
+        * **Enum-style** vars (``TTS_DEVICE``, ``TTS_DTYPE``, ``APP_LOG_FORMAT``)
+          use the same ``frozenset`` membership pattern as ``engine/device.py``.
+          An empty / whitespace-only value is treated as "use the default" so
+          shell wrappers like ``export TTS_DEVICE=$DEVICE`` (with ``$DEVICE``
+          unset) do not crash startup.
+        * **Integer** vars are parsed with ``int()``; non-integers and
+          out-of-range values raise ``ValueError`` with the env-var name in
+          the message so operators can find the offender in logs.
+        * **``TTS_INFERENCE_TIMEOUT_SECONDS``** is opt-in: unset / empty
+          leaves the attribute at ``None`` (no ``asyncio.wait_for`` wrapper);
+          any positive numeric value enables the wrapper at the synthesis
+          path (S-007 / S-010 consume this attribute).
+        * **``TTS_PRELOAD_MODELS``** parses a comma-separated list of
+          ``provider:model`` pairs; entries without a colon, with an unknown
+          provider, or with a model outside that provider's allow-list raise
+          ``ValueError`` immediately so misconfiguration cannot defer to the
+          first request.
+        """
+        self.tts_device = self._load_enum("TTS_DEVICE", _VALID_DEVICES, self.tts_device)
+        self.tts_dtype = self._load_enum("TTS_DTYPE", _VALID_DTYPES, self.tts_dtype)
+        self.app_log_format = self._load_enum(
+            "APP_LOG_FORMAT", _VALID_LOG_FORMATS, self.app_log_format
+        )
+
+        self.tts_max_queue_depth = self._load_int(
+            "TTS_MAX_QUEUE_DEPTH", self.tts_max_queue_depth, minimum=0
+        )
+        self.tts_model_cache_size = self._load_int(
+            "TTS_MODEL_CACHE_SIZE", self.tts_model_cache_size, minimum=1
+        )
+        self.tts_shutdown_drain_seconds = self._load_int(
+            "TTS_SHUTDOWN_DRAIN_SECONDS", self.tts_shutdown_drain_seconds, minimum=0
+        )
+
+        self.tts_inference_timeout_seconds = self._load_optional_timeout(
+            "TTS_INFERENCE_TIMEOUT_SECONDS"
+        )
+        self.tts_preload_models = self._load_preload_models("TTS_PRELOAD_MODELS")
+
+    @staticmethod
+    def _load_enum(name: str, allowed: frozenset[str], default: str) -> str:
+        """Read an env-driven enum-style value with frozenset membership."""
+        raw = os.environ.get(name, default).strip().lower()
+        if not raw:
+            return default
+        if raw not in allowed:
+            raise ValueError(
+                f"{name}={raw!r} is not valid (expected one of: {', '.join(sorted(allowed))})"
+            )
+        return raw
+
+    @staticmethod
+    def _load_int(name: str, default: int, *, minimum: int) -> int:
+        """Read an env-driven integer with a lower-bound check."""
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an integer") from exc
+        if value < minimum:
+            raise ValueError(f"{name} must be >= {minimum}")
+        return value
+
+    @staticmethod
+    def _load_optional_timeout(name: str) -> float | None:
+        """Parse an opt-in positive timeout in seconds.
+
+        Unset / empty → ``None`` (timeout wrapper disabled). A positive
+        numeric value enables the wrapper at the synthesis path. Zero and
+        negative values are rejected because ``asyncio.wait_for(coro, 0)``
+        is a foot-gun (it cancels before the coroutine yields).
+        """
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return None
+        try:
+            value = float(raw)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a positive number of seconds") from exc
+        if value <= 0:
+            raise ValueError(f"{name} must be > 0 (omit the variable to disable the timeout)")
+        return value
+
+    def _load_preload_models(self, name: str) -> list[PreloadEntry]:
+        """Parse ``provider:model,provider:model`` into typed entries.
+
+        Validates each provider name against the known registry and the
+        model against that provider's allow-list. The allow-list check
+        uses ``tts_*_model_allowed`` populated earlier by
+        ``_load_provider_models``, so callers must invoke this after
+        provider-models loading.
+        """
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return []
+        entries: list[PreloadEntry] = []
+        for item in self._split_csv(raw):
+            if ":" not in item:
+                raise ValueError(f"{name} entry {item!r} must be of the form 'provider:model'")
+            provider, model = item.split(":", 1)
+            provider = provider.strip()
+            model = model.strip()
+            if not provider or not model:
+                raise ValueError(f"{name} entry {item!r} must have non-empty provider and model")
+            allow_list = self._allow_list_for_provider(provider)
+            if allow_list is None:
+                raise ValueError(f"{name} entry {item!r}: unknown provider {provider!r}")
+            if model not in allow_list:
+                raise ValueError(
+                    f"{name} entry {item!r}: model {model!r} not in "
+                    f"allow-list for provider {provider!r}"
+                )
+            entries.append(PreloadEntry(provider=provider, model=model))
+        return entries
+
+    def _allow_list_for_provider(self, provider: str) -> list[str] | None:
+        """Return the model allow-list for a known provider, else ``None``."""
+        if provider == "mlx_audio":
+            return self.tts_mlx_audio_model_allowed
+        if provider == "voxtral":
+            return self.tts_voxtral_model_allowed
+        if provider == "vllm-omni":
+            return self.tts_vllm_omni_model_allowed
+        return None
 
     def _load_voice_map_from_file(self) -> dict[str, VoiceConfig]:
         """Load and validate all configured voices from ``TTS_VOICE_MAP_FILE``."""

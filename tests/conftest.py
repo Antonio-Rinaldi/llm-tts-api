@@ -58,6 +58,11 @@ def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "APP_ENV",
         "APP_LOG_LEVEL",
         "APP_LOG_FORMAT",
+        "TTS_MAX_QUEUE_DEPTH",
+        "TTS_MODEL_CACHE_SIZE",
+        "TTS_PRELOAD_MODELS",
+        "TTS_INFERENCE_TIMEOUT_SECONDS",
+        "TTS_SHUTDOWN_DRAIN_SECONDS",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -104,6 +109,14 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     settings.tts_voice_map = {}
     settings.tts_max_input_chars = 4096
     settings.tts_max_concurrent_requests = 1
+    settings.tts_device = "auto"
+    settings.tts_dtype = "auto"
+    settings.tts_max_queue_depth = 8
+    settings.tts_model_cache_size = 1
+    settings.tts_preload_models = []
+    settings.tts_inference_timeout_seconds = None
+    settings.tts_shutdown_drain_seconds = 30
+    settings.app_log_format = "text"
 
     app_state.settings = settings  # type: ignore[attr-defined]
     app_state.device_profile = DeviceProfile(  # type: ignore[attr-defined]
