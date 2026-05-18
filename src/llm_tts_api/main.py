@@ -38,6 +38,7 @@ from llm_tts_api.routers.chat import router as chat_router
 from llm_tts_api.routers.health import router as health_router
 from llm_tts_api.routers.models import router as models_router
 from llm_tts_api.routers.realtime import router as realtime_router
+from llm_tts_api.routers.synthesize import router as synthesize_router
 from llm_tts_api.routers.voices import router as voices_router
 
 logger = logging.getLogger(__name__)
@@ -222,6 +223,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(realtime_router)
     app.include_router(voices_router)
+    app.include_router(synthesize_router)
     return app
 
 
