@@ -9,6 +9,8 @@ and stashes them on ``app.state``. These tests verify:
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -36,6 +38,7 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
     settings.tts_voice_map = {}
     settings.tts_max_input_chars = 4096
     settings.tts_max_concurrent_requests = 1
+    settings.tts_max_queue_depth = 8
 
     return AppDependencies(
         settings=settings,
@@ -47,6 +50,9 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
         provider_registry=TTSProviderRegistry(providers=[]),
         tts_service=fake,  # type: ignore[arg-type]
         stt_service=STTService(),
+        concurrency_semaphore=asyncio.Semaphore(1),
+        queue_semaphore=asyncio.Semaphore(8),
+        model_locks={},
     )
 
 

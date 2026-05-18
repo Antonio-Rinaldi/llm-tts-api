@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
 import tempfile
-import threading
 import wave
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+import anyio.to_thread
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from llm_tts_api.config import Settings, VoiceConfig
-from llm_tts_api.errors import OpenAIHTTPException, internal_error, invalid_request
+from llm_tts_api.errors import OpenAIHTTPException, internal_error, invalid_request, queue_full
 from llm_tts_api.schemas.speech import SpeechRequest
 from llm_tts_api.services.audio_postprocessing import normalize_wav_rms
 from llm_tts_api.services.model_registry import ModelRegistry
@@ -26,6 +27,9 @@ from llm_tts_api.services.text_preprocessing import (
 )
 from llm_tts_api.services.tts_providers.base import GenerationOptions, SynthesisRequest
 from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
+
+ModelLockKey = tuple[str, str]
+ModelLockMap = dict[ModelLockKey, asyncio.Lock]
 
 logger = logging.getLogger(__name__)
 
@@ -182,33 +186,70 @@ class SpeechRequestResolver:
 
 
 class SpeechSynthesizer:
-    """Generate normalized WAV output from a resolved request."""
+    """Generate normalized WAV output from a resolved request.
+
+    Concurrency model (S-007):
+      * ``queue_semaphore`` bounds total admitted requests (queued + active).
+        Acquired non-blocking at entry: overflow returns ``capacity_error.queue_full``.
+      * ``concurrency_semaphore`` bounds active in-flight syntheses; admitted
+        requests wait here when the active cap is reached.
+      * ``model_locks`` serializes generation per ``(provider, model_name)``
+        because sync provider models are not thread-safe.
+      * The sync provider call runs on a worker thread via
+        ``anyio.to_thread.run_sync`` so the event loop stays responsive
+        (NFR-PF-02 / UAT-CC-02).
+    """
 
     def __init__(
-        self, provider_registry: TTSProviderRegistry, max_concurrent_requests: int
+        self,
+        provider_registry: TTSProviderRegistry,
+        concurrency_semaphore: asyncio.Semaphore,
+        queue_semaphore: asyncio.Semaphore,
+        model_locks: ModelLockMap,
     ) -> None:
-        """Create a synthesis engine with bounded in-process concurrency."""
+        """Wire the synthesis engine to its admission/serialization primitives."""
         self._provider_registry = provider_registry
-        self._synthesis_semaphore = threading.Semaphore(max_concurrent_requests)
+        self._concurrency_semaphore = concurrency_semaphore
+        self._queue_semaphore = queue_semaphore
+        self._model_locks = model_locks
 
-    def generate(self, resolved: ResolvedSpeechRequest) -> bytes:
+    def _get_model_lock(self, provider: str, model_name: str) -> asyncio.Lock:
+        """Return the per-(provider, model) lock, creating it on first use."""
+        key: ModelLockKey = (provider, model_name)
+        lock = self._model_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._model_locks[key] = lock
+        return lock
+
+    async def generate(self, resolved: ResolvedSpeechRequest) -> bytes:
         """Synthesize all chunks, normalize loudness, and concatenate final WAV bytes."""
-        with self._synthesis_semaphore:
-            provider_strategy = self._provider_registry.get(resolved.provider)
-            chunk_wavs = provider_strategy.synthesize_chunks(
-                SynthesisRequest(
-                    model_name=resolved.model_name,
-                    chunks=resolved.chunks,
-                    voice=resolved.voice,
-                    voice_name=resolved.voice_name,
-                    response_format=resolved.response_format,
-                    generation=GenerationOptions(
-                        language=resolved.voice.language,
-                        temperature=resolved.voice.temperature,
-                        top_p=resolved.voice.top_p,
-                    ),
-                )
-            )
+        if self._queue_semaphore.locked():
+            raise queue_full()
+        await self._queue_semaphore.acquire()
+        try:
+            async with self._concurrency_semaphore:
+                model_lock = self._get_model_lock(resolved.provider, resolved.model_name)
+                async with model_lock:
+                    provider_strategy = self._provider_registry.get(resolved.provider)
+                    synthesis_request = SynthesisRequest(
+                        model_name=resolved.model_name,
+                        chunks=resolved.chunks,
+                        voice=resolved.voice,
+                        voice_name=resolved.voice_name,
+                        response_format=resolved.response_format,
+                        generation=GenerationOptions(
+                            language=resolved.voice.language,
+                            temperature=resolved.voice.temperature,
+                            top_p=resolved.voice.top_p,
+                        ),
+                    )
+                    chunk_wavs = await anyio.to_thread.run_sync(
+                        provider_strategy.synthesize_chunks, synthesis_request
+                    )
+        finally:
+            self._queue_semaphore.release()
+
         normalized_chunks = [
             normalize_wav_rms(chunk_wav, target_db=resolved.normalize_db)
             for chunk_wav in chunk_wavs
@@ -249,13 +290,18 @@ class TTSService:
         settings: Settings,
         model_registry: ModelRegistry,
         provider_registry: TTSProviderRegistry,
+        concurrency_semaphore: asyncio.Semaphore,
+        queue_semaphore: asyncio.Semaphore,
+        model_locks: ModelLockMap,
     ) -> None:
         """Build and wire all internal speech pipeline components."""
         self.settings = settings
         self._resolver = SpeechRequestResolver(settings=settings, model_registry=model_registry)
         self._synthesizer = SpeechSynthesizer(
             provider_registry=provider_registry,
-            max_concurrent_requests=settings.tts_max_concurrent_requests,
+            concurrency_semaphore=concurrency_semaphore,
+            queue_semaphore=queue_semaphore,
+            model_locks=model_locks,
         )
         self._response_factory = SpeechResponseFactory()
 
@@ -266,7 +312,7 @@ class TTSService:
         if callable(preload_model):
             preload_model(settings.tts_model_default_for_provider(default_provider))
 
-    def create_speech(
+    async def create_speech(
         self, request: SpeechRequest, stream: bool = False
     ) -> FileResponse | StreamingResponse:
         """Create speech for one request and return a stream or file response.
@@ -281,7 +327,7 @@ class TTSService:
         resolved = self._resolver.resolve(request)
 
         try:
-            merged_wav = self._synthesizer.generate(resolved)
+            merged_wav = await self._synthesizer.generate(resolved)
             return self._response_factory.build(merged_wav, stream)
         except OpenAIHTTPException:
             raise

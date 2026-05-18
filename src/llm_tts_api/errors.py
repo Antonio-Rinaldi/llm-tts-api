@@ -174,6 +174,23 @@ def not_implemented(message: str) -> OpenAIHTTPException:
     return _make(501, type="validation_error", code="not_implemented", message=message, param=None)
 
 
+def queue_full(message: str = "Server is at capacity; queue is full") -> OpenAIHTTPException:
+    """Create a standardized 429 capacity error for admission-queue overflow.
+
+    Refined by S-009 once the typed error taxonomy lands; the type/code values
+    here already match the taxonomy that S-010 / S-009 will consume.
+    """
+    return OpenAIHTTPException(
+        status_code=429,
+        error=OpenAIError(
+            message=message,
+            type="capacity_error",
+            param=None,
+            code="queue_full",
+        ),
+    )
+
+
 def internal_error(message: str = "Internal server error") -> OpenAIHTTPException:
     """Create a 500 ``internal_error.unexpected_error`` (FR-ER-04).
 

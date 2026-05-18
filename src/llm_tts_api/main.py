@@ -84,6 +84,11 @@ def create_app() -> FastAPI:
             app.state.provider_registry = deps.provider_registry
             app.state.tts_service = deps.tts_service
             app.state.stt_service = deps.stt_service
+            # S-007 producer slots (consumed by S-010 /health for queue_depth
+            # and concurrent_active fields). See sprint-impl-2 Service Interface.
+            app.state.concurrency_semaphore = deps.concurrency_semaphore
+            app.state.queue_semaphore = deps.queue_semaphore
+            app.state.model_locks = deps.model_locks
         yield
 
     app = FastAPI(title="llm-tts-api", lifespan=lifespan)

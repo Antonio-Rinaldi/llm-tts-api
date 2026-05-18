@@ -20,13 +20,13 @@ def _raise_not_implemented(endpoint: str) -> None:
 
 
 @router.post("/speech", response_model=None)
-def create_speech(
+async def create_speech(
     req: SpeechRequest,
     tts_service: TTSDependency,
     stream: bool = Query(False, description="If true, stream audio from memory instead of file"),
 ) -> FileResponse | StreamingResponse:
     """Generate speech audio from text using the configured TTS pipeline."""
-    return tts_service.create_speech(req, stream=stream)
+    return await tts_service.create_speech(req, stream=stream)
 
 
 @router.post("/transcriptions", response_model=None)
