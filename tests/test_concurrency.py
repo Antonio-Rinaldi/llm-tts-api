@@ -225,7 +225,40 @@ def real_app_client() -> Iterator[tuple[TestClient, FastAPI, _SlowProvider]]:
         app.state.settings = service.settings
         app.state.device_profile = DeviceProfile(device="cpu", dtype="float32", source="auto")
         app.state.model_registry = ModelRegistry.__new__(ModelRegistry)
-        app.state.provider_registry = TTSProviderRegistry(providers=[])
+        # S-017: ``/v1/audio/speech`` now delegates to ``synthesize_core`` which
+        # needs a registry containing the slow provider, a provider_selection
+        # pointing at it, and an in-memory voice store with "alloy" seeded so
+        # the request flows past voice resolution into the slow provider.
+        app.state.provider_registry = TTSProviderRegistry(providers=[provider])  # type: ignore[list-item]
+        from llm_tts_api.services.tts_providers.auto_select import ProviderSelection
+
+        app.state.provider_selection = ProviderSelection(
+            provider_name="slow_provider", device="cpu", source="auto"
+        )
+        from tests.fakes.fake_voice_store import (
+            FakeVoiceBlobRepository,
+            FakeVoiceMetadataRepository,
+        )
+
+        metadata_repo = FakeVoiceMetadataRepository()
+        blob_repo = FakeVoiceBlobRepository()
+        from llm_tts_api.services.voice_store import VoiceRecord
+
+        async def _seed() -> None:
+            await metadata_repo.create(
+                VoiceRecord(
+                    id="alloy",
+                    transcript="ref",
+                    language="en",
+                    consent_acknowledged=True,
+                    source="crud",
+                )
+            )
+            await blob_repo.put("alloy", _wav_bytes())
+
+        asyncio.new_event_loop().run_until_complete(_seed())
+        app.state.voice_metadata_repo = metadata_repo
+        app.state.voice_blob_repo = blob_repo
         app.state.tts_service = service
         app.state.stt_service = STTService()
         app.state.concurrency_semaphore = concurrency_sem
