@@ -6,6 +6,19 @@ Tracks sprints planned and their disposition.
 |---|---|---|---|---|---|---|
 | 1 | Foundation — observability, lifespan, hardware-aware bootstrap | S-001, S-002, S-003, S-004, S-005 | DONE | 2026-05-17 | 2026-05-17 | 2026-05-17 |
 | 2 | Core services — async concurrency, model cache, error taxonomy, lifecycle | S-006, S-007, S-008, S-009, S-010, S-012 | DONE | 2026-05-17 | 2026-05-17 | 2026-05-18 |
+| 3 | Voice store — repositories, optional backends, CRUD, seed ingestion | S-022, S-023, S-024, S-025, S-011 | PLANNED | 2026-05-18 | — | — |
+
+## Sprint 3 — summary
+
+**Objective:** land the OQ-3-derived voice store end-to-end — repository Protocols + FS defaults, optional Postgres/S3 backends, CRUD endpoints under `/v1/tts/voices/*`, and idempotent seed ingestion from `voice_map.json`.
+
+**Composition:** 5 stories, 3 execution steps. Step 1: S-022 alone (foundation). Step 2: S-023 + S-024 + S-025 in parallel (all consume S-022's Protocols). Step 3: S-011 alone (consumer of S-022 + S-025).
+
+**Provability:** `POST /v1/tts/voices` end-to-end CRUD on the FS default; `pip install .[postgres]` / `.[s3]` enables alternates; selecting an alternate without the extra fails startup with `config_error.missing_extra`; `voice_map.json` ingestion idempotent across restarts.
+
+**Risks:** engineer-commit gotcha (Sprint 2 Step 1 pattern) — mitigated by SKILL.md Step 2.5 boilerplate; Step-2 conflicts on shared `dependencies.py`; `watchfiles` in Docker (RISK-3).
+
+**Detail:** `docs/planning/sprints/sprint-3.md`.
 
 ## Sprint 2 — summary
 

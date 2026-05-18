@@ -225,6 +225,7 @@ Group E (cross-cutting polish, late)
 
 #### S-011: Voice seed ingestion (legacy JSON → store)
 **Type:** Technical
+**Status:** PLANNED (Sprint 3)
 **Depends on:** S-022, S-025
 **Parallel group:** B'
 **Refs:** FR-VM-01..05, NFR-OP-05, RISK-3
@@ -258,6 +259,7 @@ Group E (cross-cutting polish, late)
 
 #### S-022: Voice repository protocols + default FS backends
 **Type:** Technical
+**Status:** PLANNED (Sprint 3)
 **Depends on:** S-003, S-012
 **Parallel group:** B
 **Refs:** FR-VS-01..04, FR-VS-10..11, NFR-SE-03, NFR-ST-01, NFR-ST-03, NFR-PV-01, NFR-PV-05
@@ -273,6 +275,7 @@ Group E (cross-cutting polish, late)
 
 #### S-023: Postgres metadata backend (optional extra)
 **Type:** Technical
+**Status:** PLANNED (Sprint 3)
 **Depends on:** S-022
 **Parallel group:** B
 **Refs:** FR-VS-01, NFR-ST-02
@@ -287,6 +290,7 @@ Group E (cross-cutting polish, late)
 
 #### S-024: S3 blob backend (optional extra)
 **Type:** Technical
+**Status:** PLANNED (Sprint 3)
 **Depends on:** S-022
 **Parallel group:** B
 **Refs:** FR-VS-02, NFR-ST-02
@@ -301,6 +305,7 @@ Group E (cross-cutting polish, late)
 
 #### S-025: Voice CRUD endpoints
 **Type:** User
+**Status:** PLANNED (Sprint 3)
 **Depends on:** S-022, S-009
 **Parallel group:** B'
 **Refs:** FR-VS-04..09, FR-VS-12, NFR-SE-01..02, NFR-CP-01
