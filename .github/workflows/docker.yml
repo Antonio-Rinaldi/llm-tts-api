@@ -1,0 +1,132 @@
+name: Docker
+
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs on the same ref — only the latest build/smoke matters.
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    name: build-${{ matrix.variant.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - name: default
+            dockerfile: Dockerfile
+            tag: llm-tts-api:ci
+            # Default image runs on CPU; smoke test exercises the CPU path.
+            run_args: ""
+          - name: cuda
+            dockerfile: Dockerfile.cuda
+            tag: llm-tts-api:ci-cuda
+            # GitHub-hosted runners have no GPU; force the CUDA image to
+            # boot on the CPU path so the smoke test still exercises the
+            # same /health + drain contract. Real GPU validation is
+            # operator-driven on a CUDA host (recorded in impl notes).
+            run_args: "-e TTS_DEVICE=cpu"
+
+    steps:
+      # actions/checkout@v4.2.2
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      # docker/setup-buildx-action@v3.7.1
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349
+
+      - name: Build ${{ matrix.variant.name }} image
+        # docker/build-push-action@v6.9.0
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75
+        with:
+          context: .
+          file: ${{ matrix.variant.dockerfile }}
+          load: true
+          push: false
+          tags: ${{ matrix.variant.tag }}
+          cache-from: type=gha,scope=${{ matrix.variant.name }}
+          cache-to: type=gha,scope=${{ matrix.variant.name }},mode=max
+
+      - name: Smoke test (start, /health, SIGTERM, drain)
+        env:
+          IMAGE: ${{ matrix.variant.tag }}
+          RUN_ARGS: ${{ matrix.variant.run_args }}
+          DRAIN_SECONDS: "10"
+        run: |
+          set -euo pipefail
+
+          cleanup() { docker rm -f llm-tts-api-smoke >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          echo "::group::Start container"
+          # Sandbox the voice store + map under a tmp dir so the smoke
+          # exercises the same volume contract operators see in prod.
+          smoke_dir="$(mktemp -d)"
+          mkdir -p "$smoke_dir/voices"
+          cp config/voice_map.container.json "$smoke_dir/voice_map.json"
+
+          # shellcheck disable=SC2086
+          docker run -d --name llm-tts-api-smoke \
+            -p 8010:8010 \
+            -e TTS_SHUTDOWN_DRAIN_SECONDS="$DRAIN_SECONDS" \
+            -e TTS_VOICE_MAP_FILE=/app/config/voice_map.container.json \
+            -e TTS_VOICE_STORE_DIR=/var/lib/llm-tts-api/voices \
+            -v "$smoke_dir/voices:/var/lib/llm-tts-api/voices" \
+            $RUN_ARGS \
+            "$IMAGE"
+          echo "::endgroup::"
+
+          echo "::group::Wait for /health 200 (60s budget)"
+          ok=0
+          for i in $(seq 1 60); do
+            if curl --fail --silent --show-error --max-time 2 \
+                http://127.0.0.1:8010/health >/dev/null; then
+              echo "healthy after ${i}s"
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::container did not become healthy within 60s"
+            docker logs llm-tts-api-smoke || true
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          echo "::group::SIGTERM and assert drain exit 0 within ${DRAIN_SECONDS}s"
+          # ``docker stop -t N`` sends SIGTERM, waits up to N seconds, then
+          # SIGKILLs. We give it DRAIN_SECONDS + a small slack window.
+          stop_budget=$(( DRAIN_SECONDS + 5 ))
+          start_ts=$(date +%s)
+          docker stop -t "$stop_budget" llm-tts-api-smoke
+          end_ts=$(date +%s)
+          elapsed=$(( end_ts - start_ts ))
+
+          exit_code="$(docker inspect -f '{{.State.ExitCode}}' llm-tts-api-smoke)"
+          echo "drain elapsed=${elapsed}s exit_code=${exit_code}"
+
+          if [ "$exit_code" -ne 0 ]; then
+            echo "::error::container exited with code ${exit_code} (expected 0)"
+            docker logs llm-tts-api-smoke || true
+            exit 1
+          fi
+          if [ "$elapsed" -gt "$stop_budget" ]; then
+            echo "::error::drain exceeded ${stop_budget}s (was ${elapsed}s)"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: Record image size
+        if: always()
+        run: |
+          docker image ls "${{ matrix.variant.tag }}" --format \
+            '{{.Repository}}:{{.Tag}}  {{.Size}}' || true

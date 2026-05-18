@@ -1,0 +1,95 @@
+# syntax=docker/dockerfile:1.7
+# CUDA variant — adds GPU-capable torch on top of the same Python 3.13
+# runtime contract as Dockerfile (default). OQ-5 resolution.
+#
+# Base: nvidia/cuda 12.9.1 cudnn-runtime on ubuntu24.04 (pinned by digest).
+# Same env-var, volume, healthcheck and SIGTERM-drain contract as the default;
+# TTS_DEVICE defaults to "cuda" so detect_device() (S-005) selects GPU without
+# needing host overrides.
+
+FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu24.04@sha256:d02c4310b6d57ca0b16cd80298bdb33a74187baafe2eccd8a6a16180ddc90802 AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /build
+
+# ubuntu24.04 ships python3.12 in the default repos. ``python3-venv`` + the
+# project's ``requires-python = ">=3.10"`` is satisfied by 3.12. Build tools
+# stay in this stage only.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-venv \
+        python3-dev \
+        build-essential \
+        libsndfile1-dev \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+# Install CUDA-flavoured torch FIRST from PyTorch's CUDA wheel index so the
+# resolver sees the GPU build; the project install then reuses that wheel
+# instead of pulling the default CPU torch. torch is a transitive dep — not
+# in pyproject — so this layer is the explicit place to pin the variant.
+RUN pip install --upgrade pip \
+    && pip install --index-url https://download.pytorch.org/whl/cu121 torch \
+    && pip install .
+
+
+FROM nvidia/cuda:12.9.1-cudnn-runtime-ubuntu24.04@sha256:d02c4310b6d57ca0b16cd80298bdb33a74187baafe2eccd8a6a16180ddc90802 AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    PATH="/opt/venv/bin:$PATH" \
+    APP_LOG_FORMAT=json \
+    TTS_DEVICE=cuda \
+    TTS_VOICE_MAP_FILE=/app/config/voice_map.container.json \
+    TTS_VOICE_STORE_DIR=/var/lib/llm-tts-api/voices \
+    TTS_SHUTDOWN_DRAIN_SECONDS=30 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Runtime: python interpreter, libsndfile, tini for signal-correct PID 1
+# (forwards SIGTERM to uvicorn so S-010 drain runs).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        libsndfile1 \
+        tini \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 1000 app \
+    && useradd  --system --uid 1000 --gid app --home-dir /app --shell /usr/sbin/nologin app \
+    && mkdir -p /app /var/lib/llm-tts-api/voices \
+    && chown -R app:app /app /var/lib/llm-tts-api
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+COPY --chown=app:app src ./src
+COPY --chown=app:app config ./config
+
+USER app
+
+VOLUME ["/var/lib/llm-tts-api/voices", "/app/config"]
+
+EXPOSE 8010
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD curl --fail --silent --show-error http://127.0.0.1:8010/health || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["uvicorn", "llm_tts_api.main:app", \
+     "--host", "0.0.0.0", "--port", "8010", \
+     "--no-use-colors"]
