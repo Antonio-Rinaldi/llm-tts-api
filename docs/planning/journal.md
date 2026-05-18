@@ -275,7 +275,7 @@ Group E (cross-cutting polish, late)
 
 #### S-023: Postgres metadata backend (optional extra)
 **Type:** Technical
-**Status:** PLANNED (Sprint 3)
+**Status:** DONE (Sprint 3)
 **Depends on:** S-022
 **Parallel group:** B
 **Refs:** FR-VS-01, NFR-ST-02
@@ -290,7 +290,7 @@ Group E (cross-cutting polish, late)
 
 #### S-024: S3 blob backend (optional extra)
 **Type:** Technical
-**Status:** PLANNED (Sprint 3)
+**Status:** DONE (Sprint 3)
 **Depends on:** S-022
 **Parallel group:** B
 **Refs:** FR-VS-02, NFR-ST-02
@@ -305,7 +305,7 @@ Group E (cross-cutting polish, late)
 
 #### S-025: Voice CRUD endpoints
 **Type:** User
-**Status:** PLANNED (Sprint 3)
+**Status:** DONE (Sprint 3)
 **Depends on:** S-022, S-009
 **Parallel group:** B'
 **Refs:** FR-VS-04..09, FR-VS-12, NFR-SE-01..02, NFR-CP-01

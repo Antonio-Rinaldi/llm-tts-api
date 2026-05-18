@@ -99,7 +99,7 @@ Sprint 3 proves itself when:
 ### S-023 — Postgres metadata backend (optional extra)
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-022 (Step 1)
 **Refs:** FR-VS-01, NFR-ST-02
 **Why selected:** Production-realistic metadata backend behind an optional extra; the SRS scopes it in explicitly.
@@ -125,7 +125,7 @@ Sprint 3 proves itself when:
 ### S-024 — S3 blob backend (optional extra)
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-022 (Step 1)
 **Refs:** FR-VS-02, NFR-ST-02
 **Why selected:** Production-realistic blob backend behind an optional extra.
@@ -151,7 +151,7 @@ Sprint 3 proves itself when:
 ### S-025 — Voice CRUD endpoints
 
 **Type:** User
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-022 (Step 1), S-009 (DONE)
 **Refs:** FR-VS-04..09, FR-VS-12, NFR-SE-01..02, NFR-CP-01
 **Why selected:** First user-facing surface of the voice store; gates Sprint 4's rich endpoint.
