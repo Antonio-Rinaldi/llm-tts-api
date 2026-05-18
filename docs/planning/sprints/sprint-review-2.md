@@ -163,3 +163,15 @@ S-012 satisfies T1..T4 and UAT-CF-01..03. All five CI gates pass in the worktree
 **This task is ready for status transition to DONE.**
 
 ---
+
+## Step 2 — S-010 Review
+
+| Story | Verdict | Must-fix | Should-fix | Reviewer artifact |
+|---|---|---|---|---|
+| S-010 | APPROVED | 0 | 0 | no (engineer's code-reviewer found zero findings ≥75 confidence; coordinator re-verified all five CI gates on the merged master) |
+
+S-010 (consumer of S-007's `app.state.{concurrency_semaphore, queue_semaphore, model_locks}` and S-008's `app.state.model_cache`) merged into master with no conflicts. Drain semantics use passive `_value` observation rather than re-acquisition (correct for counting Semaphore vs Lock). New `psutil>=5.9.0` runtime dep for the FR-HL-05 low-memory warning.
+
+Master post-merge: 244 tests passing, 87.60% coverage, mypy --strict clean across 38 source files, pip-audit clean.
+
+---

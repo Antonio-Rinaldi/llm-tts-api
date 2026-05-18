@@ -1,6 +1,6 @@
 # Sprint 2 — Core services: async concurrency, model cache, error taxonomy, lifecycle
 
-**Status:** IN PROGRESS (Step 1 DONE; Step 2 = S-010 PLANNED)
+**Status:** DONE
 **Planned:** 2026-05-17
 **Stories:** S-006, S-007, S-008, S-009, S-012 (Step 1 — parallel) + S-010 (Step 2 — depends on S-007)
 **Cycle:** llm-tts-api improvement cycle, Sprint 2 of N
@@ -195,7 +195,7 @@ Sprint 2 proves itself when:
 ### S-010 — Health/Ready split + graceful drain
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-007 (Step 1; produces semaphore slots) + S-003 (DONE)
 **Refs:** FR-HL-01/02/04/05, NFR-RL-01/05, NFR-OP-04
 **Why selected:** completes the lifecycle FR surface; consumes S-007's slots; only Step-2 story.

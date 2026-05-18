@@ -210,7 +210,7 @@ Group E (cross-cutting polish, late)
 
 #### S-010: Health/Ready split + graceful drain
 **Type:** Technical
-**Status:** PLANNED (Sprint 2)
+**Status:** DONE (Sprint 2)
 **Depends on:** S-003, S-007
 **Parallel group:** B
 **Refs:** FR-HL-01/02/04/05, NFR-RL-01/05, NFR-OP-04

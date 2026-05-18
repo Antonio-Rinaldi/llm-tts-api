@@ -12,9 +12,9 @@ completes in its isolated worktree. Companion to `sprint-2.md`.
 | S-006 | Technical | DONE | sprint-2-S-006 (merged) |
 | S-007 | Technical | DONE | sprint-2-S-007 (merged) |
 | S-008 | Technical | DONE | sprint-2-S-008 (merged) |
-| S-010 | Technical | PLANNED (Step 2) | sprint-2-S-010 (pending) |
+| S-010 | Technical | DONE | sprint-2-S-010 (merged) |
 
-Step 1 status: complete — reviewed.
+Sprint 2 status: complete — all 6 stories DONE.
 
 ---
 
@@ -626,5 +626,82 @@ module under `services/`. The `dependencies.AppDependencies` dataclass
 gained one field (`model_cache`); other Sprint 2 stories that touch
 `AppDependencies` should add their fields alongside it, not replace
 the constructor signature.
+
+---
+
+# S-010 Implementation Notes — Health/Ready split + graceful drain
+
+**Branch:** `sprint-2-S-010`
+**Commit:** `9297a46 feat(health): S-010 health/ready split + graceful drain`
+**Status:** READY-FOR-REVIEW
+
+## What changed
+
+| File | Change |
+|---|---|
+| `src/llm_tts_api/routers/health.py` | Full rewrite. `/health` now emits the FR-HL-01 body (status, version, device, dtype, provider, provider_source, model_loaded, queue_depth, concurrent_active). `/ready` reads `app.state.ready` and returns 503 `{ready, reason}` when False. |
+| `src/llm_tts_api/main.py` | Lifespan wrapped in `try/yield/finally`. On success path: flips `app.state.ready=True`, runs low-memory probe. On shutdown: clears ready, sets reason to `draining`, awaits `_drain_concurrency`. Added two helpers: `_emit_low_memory_warning` (psutil-based, FR-HL-05) and `_drain_concurrency` (polls `Semaphore._value` until released or budget expires, FR-HL-04). `create_app` initializes `app.state.ready=False, ready_reason="warming_up"` so the very first probe sees a defined value. |
+| `src/llm_tts_api/config.py` | New `Settings.tts_min_free_memory_gb` (default 4) parsed via `_load_int` with `minimum=0`. `0` disables the probe. |
+| `pyproject.toml` | Added `psutil>=5.9.0` to runtime deps. |
+| `tests/conftest.py` | Stub `app.state` fixture now publishes the S-007 semaphores (sized from settings) and sets `ready=True`/`ready_reason="ready"`. Added `TTS_MIN_FREE_MEMORY_GB` to the env-clear list and `tts_min_free_memory_gb=0` to the stub Settings. |
+| `tests/test_health_endpoints.py` | Added UAT-HL-01..05 tests + updated the pre-existing happy-path assertions to cover the new body keys. |
+| `tests/test_startup_preload.py` | Stub Settings extended with `tts_shutdown_drain_seconds=0` and `tts_min_free_memory_gb=0`. |
+
+## How I derived the /health fields
+
+Per sprint-impl-2.md §S-007 Service Interface, the agreed shape is:
+
+- `queue_depth = settings.tts_max_queue_depth - queue_semaphore._value`
+- `concurrent_active = settings.tts_max_concurrent_requests - concurrency_semaphore._value`
+
+I implemented this as `_semaphore_used(sem, capacity)` which clamps to ≥0 and tolerates `None` (test-bypass mode). `model_loaded` is rendered as `"<provider>:<model>"` strings derived from `LRUModelCache.loaded_keys()` (MRU-first per S-008).
+
+`version` comes from `importlib.metadata.version("llm-tts-api")` with a `"0.0.0"` fallback for editable installs that lack metadata.
+
+## Drain semantics (FR-HL-04, UAT-HL-03/04)
+
+`_drain_concurrency` polls `concurrency_semaphore._value` every 50ms until either:
+
+1. `_value >= capacity` → all in-flight work released, return early (logs `drain complete`).
+2. The drain budget expires → log `drain timed out after Ns (in_flight=N)` and return.
+
+Re-acquiring the semaphore (as the reference image-api does with its `inference_lock`) was rejected here because the S-007 design uses a counting `Semaphore` rather than a Lock: re-acquiring would race with admitted-but-waiting requests rather than just waiting for active ones to drain. Passive observation of `_value` is correct.
+
+The `finally` block always sets `ready=False` and `ready_reason="draining"` before calling drain, so any probe during the drain window sees the right 503 reason.
+
+## Bypass mode behavior (kept stable)
+
+When `LLM_TTS_API_TEST_NO_LIFESPAN=1`:
+- Lifespan skips the construction block, so `ready` stays at the `create_app`-time default (`False`/`warming_up`).
+- The `finally` block still runs at shutdown and re-clears the flag — harmless because nothing changed it in between.
+- `_drain_concurrency` is also a no-op in bypass mode because `drain_seconds` is initialized to 0 and only set from `deps.settings` on the non-bypass path.
+
+The test fixture explicitly sets `ready=True` in the happy-path `client` fixture so existing endpoint tests work unchanged.
+
+## Service Interface (what this story publishes for downstream)
+
+| Slot | Type | Notes |
+|---|---|---|
+| `app.state.ready` | `bool` | `False` until lifespan warmup completes; `False` from the start of shutdown. |
+| `app.state.ready_reason` | `str` | `"warming_up"` → `"ready"` → `"draining"`. Only consumed by `/ready` today. |
+
+No other story in Sprint 2 consumes these. Sprint 3 voice-store stories may extend the ready signal (e.g. `"voice_store_unreachable"` reason).
+
+## Quality gates
+
+```
+ruff check src tests           → All checks passed
+ruff format --check src tests  → 66 files left unchanged
+mypy --strict src              → no issues (38 files)
+pytest --cov-fail-under=83     → 244 passed, coverage 87.60%
+pip-audit                      → no vulnerabilities
+```
+
+The pre-existing `tests/` mypy errors (56 baseline) are unchanged; I added zero new ones in `tests/test_health_endpoints.py`.
+
+## Open follow-ups (not in this story)
+
+- README env-var inventory for `TTS_MIN_FREE_MEMORY_GB` is deferred to S-019 per sprint-2.md plan (UAT-CF-04 carries that check).
+- The drain log line format is plain text; structlog migration is out of scope until APP_LOG_FORMAT=json is finalized.
 
 ---
