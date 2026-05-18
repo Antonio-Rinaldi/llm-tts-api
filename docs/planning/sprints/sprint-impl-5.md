@@ -310,3 +310,334 @@ Delta: +3 tests (test_openai_adapter_parity.py); no regressions; existing skips/
 - Real-provider strict run is implicitly deferred to Sprint 6 (S-021 perf revalidation re-touches `docs/perf/baseline.md`). The current strict assertion holds on the deterministic fake; if a real-provider variant exposes non-determinism, the escalation policy in baseline.md describes the switch to relaxed mode.
 - The perceptual fingerprint is intentionally coarse (`blake2b/8`) so the relaxation path needs zero new deps. A finer audio-domain hash can be substituted without changing the contract surface if a later sprint requires it.
 
+
+---
+
+# Story Reviews
+
+# S-017 — Story Review (cross-task coherence)
+
+**Story:** S-017 — OpenAI adapter as thin translator over `/v1/tts/synthesize`
+**Refs:** FR-OA-01..04, NFR-PT-03, BR-9, UAT-OA-01..04 · SRS §4.3, §5 G-1
+**Reviewer mode:** Phase 1S — cross-task coherence within the 5 S-017 tasks
+**Gates re-run on review worktree:** `pytest` 375 passed / 2 skipped / 3 deselected / 1 xfailed · `mypy --strict` 52 files clean.
+
+## Verdict
+
+**No cross-task coherence issues require code fixes.** The five tasks
+(mapping table, handler refactor, streaming/header strip, `/v1/models`,
+tests + AST pin) compose consistently. One non-blocking observation
+about `tests/test_concurrency.py` coverage scope is recorded under
+"Observations" below — it is acknowledged in `sprint-impl-5.md` as a
+deliberate choice and does not block READY-FOR-REVIEW.
+
+## Coherence checks performed
+
+### 1. Shared state — do the 5 tasks cohere?
+
+- **T1 mapping table** (`sprint-impl-5.md` Service Interface) and the
+  in-code translator (`routers/audio.py::_translate_openai_request`,
+  L70–101) agree field-for-field: `model`/`input`/`voice`/`provider`/
+  `response_format`/`normalize_db` pass through; `instructions`/`speed`/
+  `stream_format` are ignored; non-wav `response_format` is rejected
+  upfront with `param="response_format"`.
+- **T2 handler refactor**: `create_speech` is 14 source lines of pure
+  translation calling `synthesize_core` — well under the
+  UAT-OA-03 ≤30 LOC budget (T5 pins this at
+  `test_create_speech_handler_under_30_loc`, body=12 LOC).
+- **T3 streaming + header strip**: `_RICH_ONLY_HEADERS` in
+  `routers/audio.py` (L51–62) matches the doc's response-shape table 1:1
+  and matches the same set in `tests/test_openai_adapter.py` (L36–47).
+  Buffered path mutates headers in place; streaming path discards the
+  rich `_TrailerStreamingResponse` entirely and rewraps in a plain
+  `StreamingResponse` with only `X-Request-ID` — so the trailer code
+  cannot run on the OpenAI path even on transports that advertise
+  `TE: trailers`.
+- **T4 `/v1/models`**: `ModelRegistry.list_models` reads the same
+  `settings.tts_*_model_allowed` lists that `synthesize_core ->
+  _resolve_provider_and_model` validates against via
+  `settings.tts_model_allowed_for_provider`. Single source of truth.
+- **T5 tests + AST pin**: AST check covers what T2/T3 actually claim
+  (see check #4 below).
+
+### 2. API contracts — OpenAI shape preserved end-to-end?
+
+- **Request**: only OpenAI-known fields are read off `SpeechRequest`;
+  rich-only fields (`language`/`number_lang`/`temperature`/`top_p`/
+  `max_sentences_per_chunk`) are not exposed and are sourced from
+  `VoiceRecord` defaults in `_build_voice_config`. Matches the table.
+- **Response headers — buffered path**: `synthesize_core` emits the
+  inventory (`X-Provider`, `X-Model`, `X-Device`, `X-Dtype`,
+  `X-Voice-Source`, `X-Voice-Id`, `X-Chunks`, `X-Total-Duration-Ms`,
+  `X-Request-ID`); `_openai_response` deletes the first eight. Pinned
+  by `test_openai_speech_strips_rich_endpoint_headers`.
+- **Response headers — streaming path**: `_openai_response` constructs
+  a fresh `StreamingResponse(inner.body_iterator, …)` with an explicit
+  `headers={"X-Request-ID": current_request_id()}`. The
+  `_TrailerStreamingResponse` instance is discarded, so its
+  `__call__`-level trailer emission cannot fire. Pinned by
+  `test_openai_speech_streaming_drains_chunked_bytes` (asserts no rich
+  header present and Content-Type is `audio/wav`).
+- **Errors**: per FR-OA-02 the adapter does not re-translate envelopes;
+  the rich envelope is the OpenAI-compatible envelope already.
+
+### 3. Behavioral conflicts — dead code paths / leaked reachability?
+
+- `routers/audio.py` does not import `get_tts_service`, `TTSService`,
+  or `SpeechSynthesizer`. The runtime synthesis path is exclusively
+  `synthesize_core`. ✓
+- `routers/synthesize.py` is a thin wrapper that calls
+  `synthesize_core`. ✓
+- `TTSService` / `SpeechSynthesizer` remain reachable via
+  `dependencies.get_tts_service` and `app.state.tts_service`; they
+  ride along only for the startup preload side effect and for direct
+  use in `tests/test_concurrency.py`. No router uses them. ✓
+- `routers/synthesize.py` re-exports `_run_synthesis`,
+  `_TrailerStreamingResponse`, `_client_advertises_trailers` to keep
+  `tests/test_synthesize.py` import paths stable — these are now
+  shim re-exports of the canonical implementations in
+  `services/synthesize_service.py`. No duplicate definitions. ✓
+
+### 4. AST check (T5) — does it pin what T2/T3 claim?
+
+- `test_audio_router_has_no_speech_synthesizer_imports` bans both
+  `from llm_tts_api.routers.synthesize import …` and
+  `from <any module> import SpeechSynthesizer`, and also bans any
+  AST `Name`/`Attribute` reference to `SpeechSynthesizer`. ✓
+- `test_audio_router_imports_synthesize_core_only` requires the
+  synthesize-related import in `routers/audio.py` to come from
+  `services.synthesize_service` and the only imported symbol to be
+  `synthesize_core`. ✓
+- `test_create_speech_handler_under_30_loc` enforces the LOC budget. ✓
+- **Minor gap (informational only)**: the AST checks do not explicitly
+  ban `from llm_tts_api.services.tts_service import TTSService` (or
+  `…SpeechRequestResolver` / `SpeechResponseFactory`). The spirit
+  "thin translator" is captured by the SpeechSynthesizer ban + LOC
+  budget + `synthesize_core`-only import requirement; a fully-defensive
+  pin could additionally name-ban `TTSService` / `SpeechRequestResolver`
+  / `SpeechResponseFactory`. Not a blocker — listed as a strengthening
+  opportunity should a future refactor try to bypass the contract.
+
+### 5. Dependency consistency — `/v1/models` aligned with the rich path?
+
+- `ModelRegistry.list_models()` enumerates
+  `tts_mlx_audio_model_allowed ∪ tts_voxtral_model_allowed ∪
+  tts_vllm_omni_model_allowed ∪ stt_model_allowed`.
+- The rich path validates against
+  `settings.tts_model_allowed_for_provider(provider_name)` (returns
+  the same per-provider list).
+- Same `Settings` instance, same fields. Subset invariant pinned by
+  `test_models_endpoint_matches_provider_allowlists` and
+  `test_models_endpoint_reflects_each_provider`. ✓
+- **Documented limitation** (already in `sprint-impl-5.md` "Risks +
+  future work"): `/v1/models` returns `{id}` only, not
+  `(provider, model)`. A strict cross-product check would need a
+  richer schema. Out-of-scope.
+
+## Observations (non-blocking)
+
+### O-1 — `tests/test_concurrency.py` exercises a parallel concurrency implementation
+
+Three UAT-CC tests — `test_concurrency_cap_limits_parallelism_uat_cc_01`,
+`test_per_model_lock_serializes_same_model_calls`,
+`test_queue_full_returns_429_uat_cc_03` — drive
+`TTSService.create_speech` directly. Post-S-017 the live HTTP synthesis
+path is `synthesize_core`, which has its **own** copy of the
+admission/concurrency/model-lock pattern (`_run_synthesis` and
+`_stream_synthesis_chunks` in `services/synthesize_service.py`). The
+two implementations agree by construction today, but:
+
+- The CC-01 / CC-03 / per-model-lock invariants are validated against
+  TTSService — a code path that no router reaches in production.
+- The only test that exercises `synthesize_core`'s concurrency model
+  via the live HTTP path is
+  `test_health_responsive_during_synthesis_uat_cc_02`, which checks
+  /health latency under load (UAT-CC-02), not CC-01/CC-03.
+
+This is **explicitly acknowledged** in `sprint-impl-5.md` ("Architecture"
+section, bullet on `tests/test_concurrency.py`). It is not a regression
+introduced by S-017 — the tests behave as before — but it is a coverage
+shape worth recording for sprint review:
+
+- **Risk if TTSService is later deleted**: CC-01/CC-03/per-model-lock
+  invariants would silently lose their assertion.
+- **Risk if `synthesize_core` and `SpeechSynthesizer` drift**: the
+  CC-01/CC-03/per-model-lock tests would still pass while the live
+  path silently diverges.
+
+**Recommended follow-up (not in S-017 scope):** in a later sprint, add
+HTTP-level versions of CC-01 and CC-03 driving `/v1/audio/speech`
+(or `/v1/tts/synthesize`) and bind them to `synthesize_core`'s
+admission primitives. Could be added as a small backlog story (e.g.,
+"S-019: re-bind UAT-CC-01/CC-03 to live synthesis path") rather than
+gating S-017.
+
+### O-2 — Streaming buffering xfail still applies
+
+The streaming test in `test_openai_adapter.py` consumes the body via
+`client.stream(...).iter_bytes()`; on `httpx.ASGITransport` the body is
+collected synchronously, so the S-015 first-byte xfail
+(`test_streaming_first_byte_arrives_before_half_duration`) continues
+to hold. The adapter test asserts only header strip + decodable body,
+not interleaved arrival — which is the correct scope. No coherence
+issue; out-of-process validation deferred to Sprint 6 (S-021). ✓
+
+## Files touched on this review worktree
+
+None. (Story review found nothing requiring code fixes.)
+
+## Human review checklist
+
+- [ ] **Mapping table parity**: re-read `sprint-impl-5.md` §"Service
+      Interface" against `routers/audio.py::_translate_openai_request`
+      and confirm field semantics (defaults, ignored fields,
+      `response_format=wav` enforcement, allow-list deferral to the
+      rich pipeline) match your reading of the OpenAI Audio API.
+- [ ] **Header strip surface**: confirm `_RICH_ONLY_HEADERS` is the
+      complete inventory you expect to be hidden from OpenAI SDK
+      clients. (`X-Request-ID` is intentionally preserved.)
+- [ ] **Error contract**: confirm the one observable change
+      (`unmapped voice` now → `404 voice_not_found` rich envelope
+      rather than `400 validation_error` old envelope) is acceptable
+      for downstream consumers per FR-OA-02.
+- [ ] **`TTSService` retention**: confirm you accept keeping
+      `TTSService` / `SpeechSynthesizer` alive in
+      `services/tts_service.py` for (a) the startup preload side
+      effect and (b) `tests/test_concurrency.py`. See O-1 above for
+      the coverage-shape implication.
+- [ ] **AST-pin sufficiency**: confirm the current pins
+      (`SpeechSynthesizer` ban + `routers.synthesize` import ban +
+      `synthesize_core`-only allow-list + 30-LOC body cap) are
+      adequate, or request a strengthening to also name-ban
+      `TTSService`/`SpeechRequestResolver`/`SpeechResponseFactory`.
+- [ ] **`/v1/models` schema**: confirm the per-id (no provider tag)
+      response shape is acceptable for this sprint, or open a story
+      to return `(provider, model)` pairs.
+- [ ] **Follow-up backlog**: decide whether O-1 ("re-bind UAT-CC-01/
+      CC-03 to live synthesis path") should be opened as a backlog
+      story now or revisited after S-018.
+
+## Test guidance (manual / out-of-process)
+
+The in-process suite is green (375/2/1). Recommended manual checks
+before merge that the unit suite cannot do:
+
+1. **Out-of-process OpenAI SDK smoke** (UAT-OA-01 / UAT-OA-02 against
+   a real uvicorn). The TestClient buffers streaming; running the
+   official OpenAI Python SDK's `with_streaming_response.create(...)`
+   against `uvicorn llm_tts_api.main:app` and asserting `iter_bytes`
+   yields more than one chunk gives a real-world streaming signal that
+   the in-process tests cannot provide. Pair with S-021 if convenient.
+2. **Header strip with curl**: `curl -sI -X POST .../v1/audio/speech …`
+   and confirm no `X-Provider` / `X-Model` / `X-Voice-Source` /
+   `X-Chunks` / `X-Total-Duration-Ms` headers in the response. Repeat
+   with `?stream=true` (use `curl -N -D-` to dump headers).
+3. **`/v1/models` parity with `.env`**: tweak
+   `TTS_MLX_AUDIO_MODEL_ALLOWED` in the real env, restart the app,
+   `curl /v1/models`, confirm the new id appears, then issue a rich
+   request with that id and confirm 200 / 400 alignment with the
+   allow-list change.
+4. **Voice not-found envelope**: send `/v1/audio/speech` with a
+   `voice` that is not in the voice store and confirm the response is
+   `404` with envelope
+   `{"error":{"type":"voice_error","code":"voice_not_found",…}}` — the
+   new contract per FR-OA-02.
+
+## References
+
+- Story spec: `docs/planning/sprints/sprint-5.md` (S-017 row)
+- Implementation notes: `docs/planning/sprints/sprint-impl-5.md`
+  §"S-017 — OpenAI adapter as thin translator"
+- Code: `src/llm_tts_api/routers/audio.py`,
+  `src/llm_tts_api/services/synthesize_service.py`,
+  `src/llm_tts_api/routers/synthesize.py`,
+  `src/llm_tts_api/services/model_registry.py`
+- Tests: `tests/test_openai_adapter.py`,
+  `tests/test_models_endpoint.py`, `tests/test_concurrency.py` (see O-1)
+
+---
+
+# S-018 Story Review — Byte-identity paired UAT (rich vs OpenAI)
+
+**Scope:** cross-task coherence within S-018 (T1 fixture, T2 strict, T3 relaxation, T4 wiring, SRS link).
+**Branch state:** merged into master at `f1fa9e5`. Files under review: `tests/test_openai_adapter_parity.py`, `docs/perf/baseline.md` (§ "RISK-8 byte-identity relaxation"), `docs/specs/software-spec.md` (§5 G-1 backlink).
+
+## Verdict
+
+**Ready.** All five coherence checks pass; no fixes were needed. The story delivers a paired UAT whose strict path actually pins the equivalence claim, whose relaxation path is code-covered (not just prose), and whose SRS anchor resolves to the live thresholds.
+
+## Coherence checks
+
+### 1. T1 paired-request fixture vs S-017 mapping table — ✅
+
+`_openai_request_body()` and `_rich_request_body()` are byte-for-byte identical dicts: `model`, `input`, `voice`, `response_format="wav"`, `provider="mlx_audio"`. Cross-referencing the S-017 mapping in `sprint-impl-5.md`:
+
+- Every OpenAI field with a rich mapping (`model`, `input`, `voice`, `provider`, `response_format`) is set 1:1.
+- Every OpenAI-only field (`instructions`, `speed`, `stream_format`) is absent on both — keeping them absent means both paths see the same effective input (mapping table's stated invariant).
+- Every rich-only field that S-017 said must be omitted (`language`, `number_lang`, `temperature`, `top_p`, `max_sentences_per_chunk`, `normalize_db`) is absent. No rich-only field is accidentally set.
+- Explicit `provider="mlx_audio"` on both sides short-circuits auto-selection drift, exactly as the mapping table demands for byte-identity.
+
+Voice seeding (`_seed_voice`) creates a single `VoiceRecord` in the shared in-memory `voice_metadata_repo`/`voice_blob_repo` so both requests resolve against the identical record — consistent with the "same `VoiceRecord` defaults applied on both paths" requirement.
+
+### 2. T2 strict byte-identity could-pass-for-wrong-reason — ✅
+
+Three independent guards against false positives:
+
+1. `assert openai_response.status_code == 200, openai_response.text` and the same for rich — a paired error envelope (both 4xx/5xx) cannot satisfy this.
+2. `assert openai_response.headers["content-type"] == "audio/wav"` and the same for rich — a paired JSON error envelope (both `application/json`) cannot satisfy this either.
+3. The sha256 comparison is against `.content` (the raw body), not headers; the third test (`test_paired_bodies_match_even_with_rich_header_difference`) explicitly verifies the rich path emits at least one `X-*` header and the OpenAI path strips them all, proving header divergence doesn't contaminate the body comparison.
+
+The "same fake → same bytes" property is by design (`FakeTTSProvider` is deterministic), and the test's real load-bearing assertion is that *both endpoints route through `synthesize_core` and therefore exercise the same chunking/WAV emission*. That's the right shape for a unit-level NFR-PT-03b gate; the real-provider strict run is deferred to S-021 per the doc and SRS A-9, and the deferral is called out in S-018 "Notes / future work."
+
+### 3. T3 relaxation actually exercised, thresholds match docs — ✅
+
+`test_paired_byte_identity_relaxed_under_risk8` runs both relaxation bounds inline (not skipped, not just documented):
+
+- Sample-delta bound: `_RELAX_SAMPLE_TOLERANCE = 1` matches baseline.md's "±1 PCM sample on `wave.getnframes()` of the first chunk WAV."
+- Perceptual-hash bound: `_RELAX_PHASH_DISTANCE = 1` matches baseline.md's "Hamming distance ≤ 1 over a 64-bit body fingerprint." Implementation `blake2b(body, digest_size=8)` matches baseline.md's stated implementation, and the "no new deps" rationale in baseline.md is honoured (only stdlib).
+- `_wav_sample_count` reads the first WAV via `wave.open` on the concatenated body — the docstring acknowledges this and ties it to SRS §5 G-1's "first chunk" wording, so the implementation choice is consistent with the contract.
+
+The threshold pins (`_RELAX_*` constants in the test) and the baseline.md table will diverge silently if someone edits one without the other; that's a documentation-coupling risk worth a future TODO but **not** a defect today.
+
+### 4. T4 standard-suite wiring decision — ✅
+
+Verified `uv run pytest tests/test_openai_adapter_parity.py` runs the 3 tests in **0.18 s** locally — the "milliseconds per test" claim in the S-018 doc holds. No new dependencies introduced (stdlib `hashlib`, `wave`, `io`, `asyncio` only). No external model load, no network, no GPU. Both endpoints reuse the existing `client` fixture which already wires `FakeTTSProvider` for the rest of the suite — zero hidden integration cost. Decision to skip the `@pytest.mark.integration` marker is sound and matches the documented rationale.
+
+### 5. SRS §5 G-1 link resolution — ✅
+
+`docs/specs/software-spec.md` §5 G-1 links to:
+
+```
+../perf/baseline.md#risk-8-byte-identity-relaxation-nfr-pt-03b--srs-5-g-1
+```
+
+baseline.md heading is `## RISK-8 byte-identity relaxation (NFR-PT-03b / SRS §5 G-1)`. GitHub-flavoured slug rules (lowercase, parentheses dropped, `/` and `§` dropped, spaces → `-`) produce `risk-8-byte-identity-relaxation-nfr-pt-03b--srs-5-g-1` (with the double hyphen where `/` was elided between two spaces). Matches the anchor in the link. SRS §5 G-1 also forward-references the live test `tests/test_openai_adapter_parity.py::test_paired_byte_identity_relaxed_under_risk8`, which exists. No broken pointer.
+
+## Strengths
+
+- The three-test layout (strict / relaxed / header-divergence) is exactly the minimum coverage needed to defend NFR-PT-03b without redundant assertions. Each test has a single, named contractual job.
+- Constants `_PAIRED_*` and `_RELAX_*` are module-scoped and named — the "fixture" is genuinely shared between strict and relaxed, so a future change to the paired request flows to both tests automatically.
+- Relaxation thresholds were pinned in **two** places (test constants + baseline.md table) with the test docstring explicitly referencing the baseline doc as the source of truth; the coupling is documented even if not enforced.
+- The escalation policy in baseline.md ("switch *that provider's* paired test to relaxed; don't delete the strict test") is the right shape — keeps SRS §5 G-1 satisfied on at least one deterministic combo.
+
+## Minor / non-blocking observations
+
+- **Threshold coupling has no enforcement.** If someone bumps `_RELAX_SAMPLE_TOLERANCE` to 2 in the test, baseline.md silently drifts. A future story could add a doc-snippet test or a shared constants module; for S-018 the coupling lives only in code comments and the baseline.md cross-reference. Not a defect, but worth noting for S-021.
+- **`_run` helper builds a fresh event loop per call.** Harmless under `pytest-asyncio` AUTO mode for the seed-only async hop, but `asyncio.run(...)` would be the idiomatic spelling. Cosmetic.
+- **Relaxed test asserts `status_code == 200` but not content-type.** The strict test covers both checks against the same paired requests so the gap is non-load-bearing; if the relaxed test ever runs against a different fixture it would be worth adding the content-type assertion.
+
+## Gate status (claimed; not re-run by this review)
+
+```
+ruff check / format     ✓
+mypy --strict src/      ✓ (52 files)
+pytest                  ✓ 375 passed, 2 skipped, 1 xfailed
+pip-audit               ✓
+```
+
+Spot-checked: `tests/test_openai_adapter_parity.py` passes (3/3) in 0.18 s against the merged tree.
+
+## Recommendation
+
+Approve. No fixes required.
+
