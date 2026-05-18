@@ -1,6 +1,6 @@
 # Sprint 2 — Core services: async concurrency, model cache, error taxonomy, lifecycle
 
-**Status:** PLANNED
+**Status:** IN PROGRESS (Step 1 DONE; Step 2 = S-010 PLANNED)
 **Planned:** 2026-05-17
 **Stories:** S-006, S-007, S-008, S-009, S-012 (Step 1 — parallel) + S-010 (Step 2 — depends on S-007)
 **Cycle:** llm-tts-api improvement cycle, Sprint 2 of N
@@ -65,7 +65,7 @@ Sprint 2 proves itself when:
 ### S-006 — Provider capability + auto-selection
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-005 (DONE)
 **Refs:** FR-HW-04..07, BR-2, BR-6, BR-7, A-1, RISK-1, UAT-HW-04..05
 **Why selected:** unblocks the rich endpoint's provider resolution; also retires `TTS_PROVIDER` as a default in favor of override.
@@ -93,7 +93,7 @@ Sprint 2 proves itself when:
 ### S-007 — Async-correct concurrency model
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-003 (DONE)
 **Refs:** FR-CC-01..04, NFR-PF-02, NFR-PF-04, NFR-SC-01..03, RISK-2
 **Why selected:** unblocks NFR-PF-02 verification and is the producer for S-010's `/health` queue-depth signals.
@@ -120,7 +120,7 @@ Sprint 2 proves itself when:
 ### S-008 — LRU model cache
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-003 (DONE)
 **Refs:** FR-CA-01..04, NFR-SC-04, BR-3
 **Why selected:** the rich endpoint will accept model overrides; cache is required to avoid reload on every switch.
@@ -145,7 +145,7 @@ Sprint 2 proves itself when:
 ### S-009 — Typed error taxonomy + envelope
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-004 (DONE)
 **Refs:** FR-ER-01..04, NFR-SE-04, NFR-OB-03
 **Why selected:** every other Sprint 2 story emits errors (S-006 no-viable-provider, S-007 queue-full, S-008 unknown-model); they need the envelope ready.
@@ -170,7 +170,7 @@ Sprint 2 proves itself when:
 ### S-012 — Configuration inventory + env validation
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** none (independent of Step 1 peers, but pairs naturally)
 **Refs:** FR-CF-01..03, NFR-OP-03
 **Why selected:** S-006/S-007/S-008 all introduce new env vars; consolidating their parsing + validation in `Settings.__post_init__` is cheaper as a single pass than per-story.

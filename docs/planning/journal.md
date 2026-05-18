@@ -149,7 +149,7 @@ Group E (cross-cutting polish, late)
 
 #### S-006: Provider capability + auto-selection
 **Type:** Technical
-**Status:** PLANNED (Sprint 2)
+**Status:** DONE (Sprint 2)
 **Depends on:** S-003, S-005
 **Parallel group:** B
 **Refs:** FR-HW-04..07, BR-2, BR-6, BR-7, A-1, RISK-1, UAT-HW-04..05
@@ -165,7 +165,7 @@ Group E (cross-cutting polish, late)
 
 #### S-007: Async-correct concurrency model
 **Type:** Technical
-**Status:** PLANNED (Sprint 2)
+**Status:** DONE (Sprint 2)
 **Depends on:** S-003
 **Parallel group:** B
 **Refs:** FR-CC-01..04, NFR-PF-02, NFR-PF-04, NFR-SC-01..03, RISK-2
@@ -180,7 +180,7 @@ Group E (cross-cutting polish, late)
 
 #### S-008: LRU model cache
 **Type:** Technical
-**Status:** PLANNED (Sprint 2)
+**Status:** DONE (Sprint 2)
 **Depends on:** S-003
 **Parallel group:** B
 **Refs:** FR-CA-01..04, NFR-SC-04, BR-3
@@ -195,7 +195,7 @@ Group E (cross-cutting polish, late)
 
 #### S-009: Typed error taxonomy + envelope
 **Type:** Technical
-**Status:** PLANNED (Sprint 2)
+**Status:** DONE (Sprint 2)
 **Depends on:** S-004
 **Parallel group:** B
 **Refs:** FR-ER-01..04, NFR-SE-04, NFR-OB-03
@@ -241,7 +241,7 @@ Group E (cross-cutting polish, late)
 
 #### S-012: Configuration inventory + env validation
 **Type:** Technical
-**Status:** PLANNED (Sprint 2)
+**Status:** DONE (Sprint 2)
 **Depends on:** None (but logical fit in Group B alongside other refactors)
 **Parallel group:** B
 **Refs:** FR-CF-01..03, NFR-OP-03, OQ-3 (multipart vs base64)

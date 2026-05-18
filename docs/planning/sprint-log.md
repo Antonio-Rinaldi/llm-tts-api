@@ -5,7 +5,7 @@ Tracks sprints planned and their disposition.
 | Sprint | Title | Stories | Status | Planned | Started | Completed |
 |---|---|---|---|---|---|---|
 | 1 | Foundation — observability, lifespan, hardware-aware bootstrap | S-001, S-002, S-003, S-004, S-005 | DONE | 2026-05-17 | 2026-05-17 | 2026-05-17 |
-| 2 | Core services — async concurrency, model cache, error taxonomy, lifecycle | S-006, S-007, S-008, S-009, S-010, S-012 | PLANNED | 2026-05-17 | — | — |
+| 2 | Core services — async concurrency, model cache, error taxonomy, lifecycle | S-006, S-007, S-008, S-009, S-010, S-012 | IN PROGRESS (Step 1 DONE; Step 2 = S-010 PLANNED) | 2026-05-17 | 2026-05-17 | — |
 
 ## Sprint 2 — summary
 
