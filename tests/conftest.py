@@ -65,6 +65,7 @@ def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TTS_PRELOAD_MODELS",
         "TTS_INFERENCE_TIMEOUT_SECONDS",
         "TTS_SHUTDOWN_DRAIN_SECONDS",
+        "TTS_MIN_FREE_MEMORY_GB",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -119,6 +120,7 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     settings.tts_preload_models = []
     settings.tts_inference_timeout_seconds = None
     settings.tts_shutdown_drain_seconds = 30
+    settings.tts_min_free_memory_gb = 0
     settings.app_log_format = "text"
 
     app_state.settings = settings  # type: ignore[attr-defined]
@@ -133,6 +135,19 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     app_state.model_cache = LRUModelCache(max_size=1)  # type: ignore[attr-defined]
     app_state.tts_service = fake_tts  # type: ignore[attr-defined]
     app_state.stt_service = STTService()  # type: ignore[attr-defined]
+    # S-007 slots — empty semaphores so /health can derive queue_depth /
+    # concurrent_active without raising. Capacity matches the stub settings.
+    import asyncio as _asyncio
+
+    app_state.concurrency_semaphore = _asyncio.Semaphore(  # type: ignore[attr-defined]
+        settings.tts_max_concurrent_requests
+    )
+    app_state.queue_semaphore = _asyncio.Semaphore(settings.tts_max_queue_depth)  # type: ignore[attr-defined]
+    app_state.model_locks = {}  # type: ignore[attr-defined]
+    # S-010: ready-flag default for the happy-path fixture. UAT-HL-02 toggles
+    # this directly in test bodies that need the not-ready path.
+    app_state.ready = True  # type: ignore[attr-defined]
+    app_state.ready_reason = "ready"  # type: ignore[attr-defined]
 
 
 @pytest.fixture

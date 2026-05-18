@@ -42,6 +42,8 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
     settings.tts_max_queue_depth = 8
     settings.tts_model_cache_size = 1
     settings.tts_preload_models = []
+    settings.tts_shutdown_drain_seconds = 0
+    settings.tts_min_free_memory_gb = 0
 
     return AppDependencies(
         settings=settings,
