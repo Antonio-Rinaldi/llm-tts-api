@@ -82,6 +82,9 @@ class Settings:
     tts_preload_models: list[PreloadEntry] = field(default_factory=list)
     tts_inference_timeout_seconds: float | None = None
     tts_shutdown_drain_seconds: int = 30
+    # S-010 — FR-HL-05: psutil-based low-memory soft warning floor in GiB.
+    # ``0`` disables the check (the floor is itself non-positive).
+    tts_min_free_memory_gb: int = 4
     app_log_format: str = "text"
 
     def __post_init__(self) -> None:
@@ -237,6 +240,9 @@ class Settings:
         )
         self.tts_shutdown_drain_seconds = self._load_int(
             "TTS_SHUTDOWN_DRAIN_SECONDS", self.tts_shutdown_drain_seconds, minimum=0
+        )
+        self.tts_min_free_memory_gb = self._load_int(
+            "TTS_MIN_FREE_MEMORY_GB", self.tts_min_free_memory_gb, minimum=0
         )
 
         self.tts_inference_timeout_seconds = self._load_optional_timeout(
