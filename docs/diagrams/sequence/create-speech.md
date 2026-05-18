@@ -6,7 +6,7 @@ End-to-end path for the OpenAI-compatible endpoint. Post-S-017, `routers/audio.p
 ## Participants
 - `create_speech` — `src/llm_tts_api/routers/audio.py`
 - `_translate_openai_request` — `routers/audio.py`
-- `_RICH_ONLY_HEADERS` — `routers/audio.py:51-62`
+- `_RICH_ONLY_HEADERS` — `routers/audio.py`
 - `synthesize_core` — `src/llm_tts_api/services/synthesize_service.py`
 
 ## Narrative
