@@ -40,7 +40,7 @@ Service-boundary rule applies. S-018 consumes the translation contract S-017 pub
 ## 5. Stories
 
 ### S-017: OpenAI adapter as thin translator
-- **Status:** PLANNED
+- **Status:** READY-FOR-REVIEW
 - **Type:** User
 - **Parallel with:** None within this sprint
 - **Depends on (intra-sprint):** None (depends on S-013 — DONE)
@@ -51,11 +51,11 @@ Service-boundary rule applies. S-018 consumes the translation contract S-017 pub
 
 | # | Task | Purpose | Parallel | Status | Refs |
 |---|------|---------|----------|--------|------|
-| 1 | Define the OpenAI→rich request mapping table | Document each OpenAI field (`model`, `input`, `voice`, `response_format`, `speed`, `stream`) → rich-endpoint field, including defaults applied for fields the OpenAI schema does not expose. Lives in the implementation notes so S-018 can pair against it. | No (foundation) | PLANNED | FR-OA-01, SRS §5 G-1 |
-| 2 | Refactor `POST /v1/audio/speech` handler to translate + delegate | Replace direct `SpeechSynthesizer` calls with: (a) translate OpenAI request → rich-endpoint internal call signature, (b) await the rich endpoint's service-layer function (not via HTTP), (c) translate the response back to OpenAI shape. Handler stays ≤30 LOC of translation per UAT-OA-03. | No (depends on T1) | PLANNED | FR-OA-02, NFR-PT-03 |
-| 3 | Preserve OpenAI streaming end-to-end | Ensure `with_streaming_response.create(...)` still works: stream raw bytes through with OpenAI-expected `Content-Type`. Strip rich-endpoint-only headers (`X-Voice-Source`, `X-Chunks`, etc.) from the OpenAI response to keep the OpenAI contract intact per user constraint. | No (depends on T2) | PLANNED | FR-OA-03, UAT-OA-02 |
-| 4 | Sync `GET /v1/models` to the rich-endpoint catalog | Make `/v1/models` enumerate the same `(provider, model)` pairs the rich endpoint accepts (driven from the provider registry + allow-lists, no duplicated lists). | Yes (with T3 — independent surface) | PLANNED | FR-OA-04, UAT-OA-04 |
-| 5 | Tests: OpenAI request shape unchanged + adapter LOC + no-bypass | UAT-OA-01 (OpenAI request returns 200), UAT-OA-02 (SDK streaming), UAT-OA-03 (grep/AST check that the handler does not import or call `SpeechSynthesizer` directly — only the rich service-layer entry point), UAT-OA-04 (`/v1/models` matches catalog). | No (verifies T1–T4) | PLANNED | FR-OA-01..04 |
+| 1 | Define the OpenAI→rich request mapping table | Document each OpenAI field (`model`, `input`, `voice`, `response_format`, `speed`, `stream`) → rich-endpoint field, including defaults applied for fields the OpenAI schema does not expose. Lives in the implementation notes so S-018 can pair against it. | No (foundation) | READY-FOR-REVIEW | FR-OA-01, SRS §5 G-1 |
+| 2 | Refactor `POST /v1/audio/speech` handler to translate + delegate | Replace direct `SpeechSynthesizer` calls with: (a) translate OpenAI request → rich-endpoint internal call signature, (b) await the rich endpoint's service-layer function (not via HTTP), (c) translate the response back to OpenAI shape. Handler stays ≤30 LOC of translation per UAT-OA-03. | No (depends on T1) | READY-FOR-REVIEW | FR-OA-02, NFR-PT-03 |
+| 3 | Preserve OpenAI streaming end-to-end | Ensure `with_streaming_response.create(...)` still works: stream raw bytes through with OpenAI-expected `Content-Type`. Strip rich-endpoint-only headers (`X-Voice-Source`, `X-Chunks`, etc.) from the OpenAI response to keep the OpenAI contract intact per user constraint. | No (depends on T2) | READY-FOR-REVIEW | FR-OA-03, UAT-OA-02 |
+| 4 | Sync `GET /v1/models` to the rich-endpoint catalog | Make `/v1/models` enumerate the same `(provider, model)` pairs the rich endpoint accepts (driven from the provider registry + allow-lists, no duplicated lists). | Yes (with T3 — independent surface) | READY-FOR-REVIEW | FR-OA-04, UAT-OA-04 |
+| 5 | Tests: OpenAI request shape unchanged + adapter LOC + no-bypass | UAT-OA-01 (OpenAI request returns 200), UAT-OA-02 (SDK streaming), UAT-OA-03 (grep/AST check that the handler does not import or call `SpeechSynthesizer` directly — only the rich service-layer entry point), UAT-OA-04 (`/v1/models` matches catalog). | No (verifies T1–T4) | READY-FOR-REVIEW | FR-OA-01..04 |
 
 #### Acceptance Criteria
 - OpenAI-shaped request works unchanged (UAT-OA-01).
