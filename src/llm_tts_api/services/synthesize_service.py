@@ -64,6 +64,55 @@ from llm_tts_api.services.voice_store import (
 logger = logging.getLogger(__name__)
 
 
+def _build_synthesis_request(
+    *,
+    model_name: str,
+    chunk_text: str,
+    voice: VoiceConfig,
+    voice_name: str,
+    response_format: str,
+) -> SynthesisRequest:
+    """Construct one per-chunk :class:`SynthesisRequest` (consolidates two call sites)."""
+    return SynthesisRequest(
+        model_name=model_name,
+        chunks=[chunk_text],
+        voice=voice,
+        voice_name=voice_name,
+        response_format=response_format,
+        generation=GenerationOptions(
+            language=voice.language,
+            temperature=voice.temperature,
+            top_p=voice.top_p,
+        ),
+    )
+
+
+def _synthesis_headers(
+    *,
+    provider_name: str,
+    model_name: str,
+    device_profile: DeviceProfile,
+    record: VoiceRecord,
+    chunks: int | None = None,
+    duration_ms: int | None = None,
+) -> dict[str, str]:
+    """FR-EP-04 response headers; ``chunks`` / ``duration_ms`` omitted on the stream path."""
+    headers: dict[str, str] = {
+        "X-Request-ID": current_request_id(),
+        "X-Provider": provider_name,
+        "X-Model": model_name,
+        "X-Device": device_profile.device,
+        "X-Dtype": device_profile.dtype,
+        "X-Voice-Source": str(record.source),
+        "X-Voice-Id": record.id,
+    }
+    if chunks is not None:
+        headers["X-Chunks"] = str(chunks)
+    if duration_ms is not None:
+        headers["X-Total-Duration-Ms"] = str(duration_ms)
+    return headers
+
+
 def _wav_duration_ms(wav_bytes: bytes) -> int:
     """Return WAV duration in milliseconds, or 0 if the payload is empty/invalid."""
     if not wav_bytes:
@@ -209,17 +258,12 @@ async def _stream_synthesis_chunks(
                 model_locks[key] = lock
             async with lock:
                 for chunk_text in chunks:
-                    synthesis_req = SynthesisRequest(
+                    synthesis_req = _build_synthesis_request(
                         model_name=model_name,
-                        chunks=[chunk_text],
+                        chunk_text=chunk_text,
                         voice=voice,
                         voice_name=voice_name,
                         response_format=response_format,
-                        generation=GenerationOptions(
-                            language=voice.language,
-                            temperature=voice.temperature,
-                            top_p=voice.top_p,
-                        ),
                     )
                     result: list[bytes] = await anyio.to_thread.run_sync(
                         provider_strategy.synthesize_chunks, synthesis_req
@@ -306,17 +350,12 @@ async def _run_synthesis(
                             len(chunks),
                         )
                         raise asyncio.CancelledError("client disconnected")
-                    synthesis_req = SynthesisRequest(
+                    synthesis_req = _build_synthesis_request(
                         model_name=model_name,
-                        chunks=[chunk_text],
+                        chunk_text=chunk_text,
                         voice=voice,
                         voice_name=voice_name,
                         response_format=response_format,
-                        generation=GenerationOptions(
-                            language=voice.language,
-                            temperature=voice.temperature,
-                            top_p=voice.top_p,
-                        ),
                     )
                     chunk_results = await anyio.to_thread.run_sync(
                         provider_strategy.synthesize_chunks, synthesis_req
@@ -399,15 +438,12 @@ async def synthesize_core(
             owned_tmp_path = tmp_path
             tmp_path = None
             totals: dict[str, int] = {"chunks": 0, "duration_ms": 0}
-            stream_headers: dict[str, str] = {
-                "X-Request-ID": current_request_id(),
-                "X-Provider": provider_name,
-                "X-Model": model_name,
-                "X-Device": device_profile.device,
-                "X-Dtype": device_profile.dtype,
-                "X-Voice-Source": str(record.source),
-                "X-Voice-Id": record.id,
-            }
+            stream_headers = _synthesis_headers(
+                provider_name=provider_name,
+                model_name=model_name,
+                device_profile=device_profile,
+                record=record,
+            )
             generator = _stream_synthesis_chunks(
                 provider_strategy=provider_strategy,
                 provider_name=provider_name,
@@ -448,17 +484,14 @@ async def synthesize_core(
         merged = _concat_wav_bytes(normalized_chunks)
         duration_ms = _wav_duration_ms(merged)
 
-        headers: dict[str, str] = {
-            "X-Request-ID": current_request_id(),
-            "X-Provider": provider_name,
-            "X-Model": model_name,
-            "X-Device": device_profile.device,
-            "X-Dtype": device_profile.dtype,
-            "X-Voice-Source": str(record.source),
-            "X-Voice-Id": record.id,
-            "X-Chunks": str(len(chunk_wavs)),
-            "X-Total-Duration-Ms": str(duration_ms),
-        }
+        headers = _synthesis_headers(
+            provider_name=provider_name,
+            model_name=model_name,
+            device_profile=device_profile,
+            record=record,
+            chunks=len(chunk_wavs),
+            duration_ms=duration_ms,
+        )
         return Response(content=merged, media_type="audio/wav", headers=headers)
 
     except OpenAIHTTPException:

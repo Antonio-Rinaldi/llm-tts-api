@@ -29,7 +29,7 @@ from llm_tts_api.dependencies import (
     get_voice_metadata_repo,
 )
 from llm_tts_api.engine import DeviceProfile
-from llm_tts_api.errors import invalid_request, not_implemented
+from llm_tts_api.errors import invalid_request, raise_not_implemented
 from llm_tts_api.observability import current_request_id
 from llm_tts_api.schemas.speech import SpeechRequest
 from llm_tts_api.schemas.synthesis import SynthesizeRequest
@@ -48,6 +48,8 @@ STTDependency = Annotated[STTService, Depends(get_stt_service)]
 
 # Rich-endpoint-only response headers — stripped from the OpenAI adapter
 # path so the response shape stays OpenAI-identical (user constraint).
+# Kept in sync with `synthesize_service._RICH_ONLY_HEADER_KEYS` by the
+# byte-identity parity UAT (tests/test_openai_adapter_parity.py).
 _RICH_ONLY_HEADERS: frozenset[str] = frozenset(
     {
         "x-provider",
@@ -60,11 +62,6 @@ _RICH_ONLY_HEADERS: frozenset[str] = frozenset(
         "x-total-duration-ms",
     }
 )
-
-
-def _raise_not_implemented(endpoint: str) -> None:
-    """Raise the standard OpenAI-style not-implemented error for one endpoint."""
-    raise not_implemented(f"Endpoint '{endpoint}' is not implemented yet")
 
 
 def _translate_openai_request(req: SpeechRequest, *, stream: bool) -> SynthesizeRequest:
@@ -164,37 +161,37 @@ def create_translation(stt_service: STTDependency) -> NoReturn:
 @router.post("/voices")
 def create_voice() -> None:
     """Placeholder endpoint for voice enrollment workflows."""
-    _raise_not_implemented("/v1/audio/voices")
+    raise_not_implemented("/v1/audio/voices")
 
 
 @router.get("/voice_consents")
 def list_voice_consents() -> None:
     """Placeholder endpoint for listing voice consent records."""
-    _raise_not_implemented("/v1/audio/voice_consents")
+    raise_not_implemented("/v1/audio/voice_consents")
 
 
 @router.post("/voice_consents")
 def create_voice_consents() -> None:
     """Placeholder endpoint for creating voice consent records."""
-    _raise_not_implemented("/v1/audio/voice_consents")
+    raise_not_implemented("/v1/audio/voice_consents")
 
 
 @router.get("/voice_consents/{consent_id}")
 def get_voice_consent(consent_id: str) -> None:
     """Placeholder endpoint for retrieving one voice consent record."""
     _ = consent_id
-    _raise_not_implemented("/v1/audio/voice_consents/{consent_id}")
+    raise_not_implemented("/v1/audio/voice_consents/{consent_id}")
 
 
 @router.post("/voice_consents/{consent_id}")
 def update_voice_consent(consent_id: str) -> None:
     """Placeholder endpoint for updating one voice consent record."""
     _ = consent_id
-    _raise_not_implemented("/v1/audio/voice_consents/{consent_id}")
+    raise_not_implemented("/v1/audio/voice_consents/{consent_id}")
 
 
 @router.delete("/voice_consents/{consent_id}")
 def delete_voice_consent(consent_id: str) -> None:
     """Placeholder endpoint for deleting one voice consent record."""
     _ = consent_id
-    _raise_not_implemented("/v1/audio/voice_consents/{consent_id}")
+    raise_not_implemented("/v1/audio/voice_consents/{consent_id}")

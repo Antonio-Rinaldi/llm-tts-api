@@ -32,7 +32,7 @@ from llm_tts_api.dependencies import (
     get_voice_blob_repo,
     get_voice_metadata_repo,
 )
-from llm_tts_api.errors import OpenAIError, OpenAIHTTPException, invalid_request, voice_error
+from llm_tts_api.errors import OpenAIHTTPException, invalid_request, voice_error
 from llm_tts_api.schemas.voices import (
     VoiceCreate,
     VoiceListResponse,
@@ -76,6 +76,10 @@ def _check_magic_bytes(content_type: str, data: bytes) -> bool:
     return False
 
 
+def _ref_audio_invalid(message: str) -> OpenAIHTTPException:
+    return invalid_request(message, param="audio", code="ref_audio_invalid")
+
+
 def _read_audio_validated(
     audio: UploadFile,
     max_bytes: int,
@@ -83,30 +87,14 @@ def _read_audio_validated(
     """Read upload body, enforcing size + content-type + magic-bytes checks."""
     content_type = (audio.content_type or "").lower()
     if content_type not in _ALLOWED_CONTENT_TYPES:
-        raise invalid_request(
-            "audio content-type is not allowed",
-            param="audio",
-            code="ref_audio_invalid",
-        )
+        raise _ref_audio_invalid("audio content-type is not allowed")
     data = audio.file.read(max_bytes + 1)
     if len(data) > max_bytes:
-        raise invalid_request(
-            f"audio exceeds maximum size of {max_bytes} bytes",
-            param="audio",
-            code="ref_audio_invalid",
-        )
+        raise _ref_audio_invalid(f"audio exceeds maximum size of {max_bytes} bytes")
     if not data:
-        raise invalid_request(
-            "audio body is empty",
-            param="audio",
-            code="ref_audio_invalid",
-        )
+        raise _ref_audio_invalid("audio body is empty")
     if not _check_magic_bytes(content_type, data):
-        raise invalid_request(
-            "audio magic bytes do not match declared content-type",
-            param="audio",
-            code="ref_audio_invalid",
-        )
+        raise _ref_audio_invalid("audio magic bytes do not match declared content-type")
     return data
 
 
@@ -220,14 +208,11 @@ async def create_voice(
     try:
         created = await repo.create(record)
     except VoiceAlreadyExistsError as exc:
-        raise OpenAIHTTPException(
+        raise invalid_request(
+            f"voice id {payload.id!r} already exists",
+            param="id",
+            code="voice_id_exists",
             status_code=409,
-            error=OpenAIError(
-                message=f"voice id {payload.id!r} already exists",
-                type="validation_error",
-                code="voice_id_exists",
-                param="id",
-            ),
         ) from exc
     except VoiceIdInvalidError as exc:
         raise invalid_request(str(exc), param="id", code="invalid_parameter") from exc
