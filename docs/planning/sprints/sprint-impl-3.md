@@ -11,7 +11,7 @@ completes in its isolated worktree. Companion to `sprint-3.md`.
 | S-023 | Technical | DONE | sprint-3-S-023 (merged) |
 | S-024 | Technical | DONE | sprint-3-S-024 (merged) |
 | S-025 | User | DONE | sprint-3-S-025 (merged) |
-| S-011 | Technical | PLANNED (Step 3) | sprint-3-S-011 (pending) |
+| S-011 | Technical | DONE | sprint-3-S-011 (merged) |
 
 Step 1 status: complete — coordinator-committed.
 
@@ -410,3 +410,90 @@ pip-audit                            → flags 6 pre-existing global-env
 ---
 
 Step 2 status: complete — all 3 stories DONE.
+
+# S-011 Implementation Notes — Voice seed ingestion (voice_map.json → store)
+
+**Status:** READY-FOR-REVIEW
+**Branch:** `sprint-3-S-011`
+**Commit:** `96d8ec3`
+**Worktree:** `.worktrees/sprint-3/S-011`
+**Refs:** FR-VM-01..05, NFR-OP-05, RISK-3, UAT-VM-01..05
+
+## What changed
+
+| File | Change |
+|---|---|
+| `src/llm_tts_api/services/voice_store/seed_ingestion.py` | NEW. `VoiceSeedIngestor` (`ingest_once` / `watch_and_ingest`); atomic-per-pass validation (`_parse_and_validate` raises `_SeedValidationError`; the whole pass is aborted and `provider_error.voice_seed_ingest_failed` is logged on any failure). Helpers `resolve_seed_file_path()` (returns `None` for unset/missing) and `force_polling_from_env()` (reads `TTS_VOICE_MAP_WATCH_FORCE_POLLING`). |
+| `src/llm_tts_api/services/voice_store/__init__.py` | Re-exports `VoiceSeedIngestor`, `resolve_seed_file_path`, `force_polling_from_env`. |
+| `src/llm_tts_api/dependencies.py` | New `AppDependencies.voice_seed_ingestor` slot; `build_default_dependencies` constructs it after both voice repos, passing the resolved seed path (or `None`) and the polling flag. |
+| `src/llm_tts_api/main.py` | Lifespan now runs `ingest_once()` synchronously **before** flipping `app.state.ready = True` (so UAT-VM-01's "post-warmup `/ready` 200 then voices listed" is honored), then spawns `watch_and_ingest()` as a background task on `app.state.voice_seed_ingestor`. The task is cancelled in the `finally` block on shutdown. |
+| `src/llm_tts_api/config.py` | FR-VM-05: `Settings._resolve_voice_map_path` now returns `None` for unset env var or absent file (previously raised). A non-empty env var pointing at a non-file (e.g. a directory) still raises. The legacy `tts_voice_map` simply becomes `{}` in that case. |
+| `pyproject.toml` | Add `watchfiles>=0.21` to base `dependencies`. |
+| `tests/conftest.py` | `_stub_app_state` now also populates `app.state.voice_seed_ingestor` with a no-op ingestor; `clear_env` clears `TTS_VOICE_MAP_WATCH_FORCE_POLLING`. |
+| `tests/test_startup_preload.py` | `_stub_deps` now constructs and passes a no-op `VoiceSeedIngestor`. |
+| `tests/test_voice_seed_ingestion.py` | NEW. UAT-VM-01..05 plus parametrized validation surface (path-traversal id, missing language, bad temperature/top_p/max_sentences, ref_audio missing on disk, invalid JSON root, non-object root, etc.). Plus env-helper unit tests and a no-seed `watch_and_ingest` early-return test. |
+
+## Service Interface
+
+### New `app.state` slot
+
+- `app.state.voice_seed_ingestor: VoiceSeedIngestor` — published by the lifespan. Consumers may call `ingest_once()` directly if they need to force a refresh (no current consumer does; the background watcher covers the file-change path).
+
+### Env vars (added)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `TTS_VOICE_MAP_WATCH_FORCE_POLLING` | unset / `0` | When truthy (`1`/`true`/`yes`), passes `force_polling=True` to `watchfiles.awatch`. Use inside Docker bind-mounts where inotify is unreliable (RISK-3). |
+
+`TTS_VOICE_MAP_FILE` semantics are unchanged in shape but **relaxed**: unset or pointing at a missing file is now valid (FR-VM-05), and the service starts with an empty legacy `tts_voice_map` and an idle seed ingestor.
+
+## Behavior summary
+
+- **`ingest_once()`**: returns the count of newly-created records.
+  - No seed path / file absent → log info, return 0 (FR-VM-05).
+  - Validation fails for ANY entry → log `provider_error.voice_seed_ingest_failed reason=… path=…`, return 0 — the store is NOT touched (FR-VM-03 atomic-per-pass).
+  - Otherwise, for each entry: if `await metadata_repo.exists(id)` → skip; else read ref_audio bytes, `blob_repo.put`, then `metadata_repo.create` with `source="seed"`, `consent_acknowledged=True`. A racing `OSError` between validation and read also aborts the pass (`reason=read_failed`).
+- **`watch_and_ingest()`**: long-running task using `watchfiles.awatch(parent_dir, force_polling=…, step=200)`. Each change burst is filtered to changes that resolve to the seed file (the parent-dir watch is the only way to catch editor "save = rename" patterns). On a hit, `ingest_once()` runs. `step=200` keeps the reload latency well under the 2 s NFR-OP-05. The loop swallows non-cancellation exceptions to keep the lifespan stable (re-raising would crash the background task and leave the service running silently without hot reload).
+
+## Acceptance criteria — verification
+
+| AC | Status | Evidence |
+|---|---|---|
+| Empty-store startup ingests every entry with `source="seed"` (UAT-VM-01) | ✅ | `tests/test_voice_seed_ingestion.py::test_ingest_once_populates_empty_store`. |
+| Restart leaves CRUD voices untouched; new seeds added (UAT-VM-02) | ✅ | `test_ingest_once_preserves_crud_and_adds_new_seeds` covers both `source=crud` preservation and existing `source=seed` non-clobbering. |
+| File change re-ingests within 2 s (UAT-VM-03) | ✅ | `test_watch_picks_up_file_change_within_two_seconds` runs `watch_and_ingest` under `force_polling=True` and verifies the new entry within a 2 s deadline (polling-path proxy for the Docker check; native `awatch` is faster). |
+| Invalid edit → store unchanged + `provider_error.voice_seed_ingest_failed` log (UAT-VM-04) | ✅ | `test_invalid_edit_preserves_store_and_logs_failure` + the parametrized validation-surface test covers every reject path. |
+| Unset / missing seed file → clean startup with empty store (UAT-VM-05) | ✅ | `test_unset_seed_file_is_clean_noop`, `test_missing_seed_file_is_clean_noop`, `test_resolve_seed_file_path_missing_returns_none`. Settings tolerance covered by the relaxed `_resolve_voice_map_path` (returns `None`). |
+
+## Quality gates
+
+```
+ruff check src tests                → All checks passed
+ruff format --check src tests       → 83 files left unchanged
+mypy --strict src                   → no issues (49 files)
+pytest --cov-fail-under=83          → 342 passed, 3 deselected; 85.27% coverage
+pip-audit                           → 6 pre-existing global-env advisories
+                                       (lxml/pytest/python-multipart/urllib3);
+                                       same set flagged by S-023/S-024/S-025.
+                                       None introduced by this story.
+```
+
+## Watchfiles-in-Docker note (RISK-3 / UAT-VM-03)
+
+The watchfiles polling backend is enabled by setting `TTS_VOICE_MAP_WATCH_FORCE_POLLING=1`. The test suite exercises the polling path (`force_polling=True`) on the host filesystem; running UAT-VM-03 inside the production container image is a CI follow-up (sprint-3.md S-011.T5 explicitly calls this out — the container Dockerfile is a Sprint-4 story, S-020). Recommend setting `TTS_VOICE_MAP_WATCH_FORCE_POLLING=1` in the production compose/k8s manifest until inotify reliability is verified on the deploy target.
+
+## Coordination notes for Sprint 4 / downstream stories
+
+- The S-013 rich endpoint should keep reading from `app.state.voice_metadata_repo` — seed and CRUD records are now mixed in a single store; both have `source` set, so the rich endpoint can filter or annotate as needed.
+- `tts_voice_map` (legacy in-memory) remains populated from the same file for the current synthesis path, so the bridge to the voice store stays a Sprint-4 concern (FR-VS-10 / S-013).
+- The watcher uses `watchfiles.awatch` on the parent directory; if multiple files in the same directory churn rapidly, the filter on `Path(p).resolve() == seed_path.resolve()` keeps re-ingestion scoped. No debounce was added — `awatch`'s own debouncing (default `step=50` ms, overridden to 200 ms here) is sufficient.
+
+## Out of scope (intentional)
+
+- README env-var inventory update for `TTS_VOICE_MAP_WATCH_FORCE_POLLING` — deferred to S-019 along with other Sprint-3 env vars.
+- Per-entry partial application — FR-VM-03 mandates atomic-per-pass; partial application is explicitly forbidden.
+- Removing or marking-deleted entries when the seed file shrinks — FR-VM is upsert-only (CRUD voices can co-exist; the spec deliberately avoids deletion-from-seed to prevent operators accidentally wiping voices via JSON edit).
+
+---
+
+**Sprint 3 status: complete — all 5 stories DONE.**

@@ -225,7 +225,7 @@ Group E (cross-cutting polish, late)
 
 #### S-011: Voice seed ingestion (legacy JSON → store)
 **Type:** Technical
-**Status:** PLANNED (Sprint 3)
+**Status:** DONE (Sprint 3)
 **Depends on:** S-022, S-025
 **Parallel group:** B'
 **Refs:** FR-VM-01..05, NFR-OP-05, RISK-3

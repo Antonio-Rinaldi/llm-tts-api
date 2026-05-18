@@ -1,6 +1,6 @@
 # Sprint 3 — Voice store: repositories, optional backends, CRUD endpoints, seed ingestion
 
-**Status:** PLANNED
+**Status:** DONE
 **Planned:** 2026-05-18
 **Stories:** S-022 (Step 1) → S-023 + S-024 + S-025 (Step 2 parallel) → S-011 (Step 3)
 **Cycle:** llm-tts-api improvement cycle, Sprint 3 of N
@@ -182,7 +182,7 @@ Sprint 3 proves itself when:
 ### S-011 — Voice seed ingestion (legacy JSON → store)
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-022 (Step 1), S-025 (Step 2)
 **Refs:** FR-VM-01..05, NFR-OP-05, RISK-3
 **Why selected:** Closes the operator-facing seed-file workflow; lets existing deploys keep using `voice_map.json` without losing it on the voice-store transition.
