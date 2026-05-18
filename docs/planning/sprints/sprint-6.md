@@ -40,7 +40,7 @@ Service-boundary check: S-019 (docs), S-020 (container), S-021 (perf test) modif
 ## 5. Stories
 
 ### S-019: Documentation refresh
-- **Status:** PLANNED
+- **Status:** READY-FOR-REVIEW
 - **Type:** Technical
 - **Parallel with:** S-020, S-021 (Step 1)
 - **Depends on (intra-sprint):** None (all upstream deps DONE)
@@ -52,11 +52,11 @@ Service-boundary check: S-019 (docs), S-020 (container), S-021 (perf test) modif
 
 | # | Task | Purpose | Parallel | Status | Refs |
 |---|------|---------|----------|--------|------|
-| 1 | README sections refresh | Update top-level `README.md` to current Sprint-5 state. Required sections: Hardware Auto-Detection (S-005 rules), full env-var inventory (S-012 — including TTS_VOICE_* and TTS_REFAUDIO_MAX_BYTES from Sprint 3), Rich endpoint (`POST /v1/tts/synthesize`) examples with full header inventory, Voice-CRUD endpoints under `/v1/tts/voices/*` with consent attestation note, seed-ingestion mechanism + `voice_map.json` legacy contract, storage-backend selection matrix (FS default vs `[postgres]`/`[s3]` extras), Error taxonomy table sourced from `src/llm_tts_api/errors.py`, **Voice biometric notice** verbatim per NFR-CP-01/NFR-PV-04, Sizing recommendations resolving SRS §5 C-1, link to `docs/perf/baseline.md` Performance section. | Yes (independent surface) | PLANNED | UAT-DC-01, UAT-CF-04, NFR-CP-01, NFR-PV-04 |
-| 2 | Class diagrams refresh | Refresh `docs/diagrams/class/*.md` to current code. Add a new `voice-store.md` (FR-VS-01..12 producer/consumer Protocols + FS/Postgres/S3 backends). Update `overview.md` (router topology: `synthesize.py` + `audio.py` both delegate to `services/synthesize_service.py::synthesize_core`). Update `config-and-schemas.md` for new env vars + `SynthesizeRequest`. Update `providers.md` for the auto-selection capability table (S-006). All Mermaid syntax; match the per-component split llm-image-api uses (no monolithic mega-diagram). | Yes (independent files) | PLANNED | FR-DC-02 |
-| 3 | Sequence diagrams refresh | Update + add `docs/diagrams/sequence/*.md` to current code. Refresh: `startup.md` (lifespan + warmup + ready toggle from S-003/S-010), `health-and-ready.md` (S-010 lock-free `/health`, drain semantics), `create-speech.md` (now a thin translator over `synthesize_core` per S-017). Add new: `synthesize-rich.md` (POST /v1/tts/synthesize buffered AND streamed paths from S-013/S-015), `voice-crud.md` (POST/GET/PUT/DELETE under /v1/tts/voices/* from S-025), `voice-seed-ingestion.md` (S-011 idempotent ingest + watchfiles reload). | Yes (independent files) | PLANNED | UAT-DC-02 |
-| 4 | OpenAPI spec refresh | Refresh `docs/openapi/openapi.yaml` (or split by surface like llm-image-api's pattern). Must cover `/v1/tts/synthesize`, `/v1/tts/voices/*` (POST/GET list/GET one/GET audio/PUT/DELETE), `/v1/audio/speech` (OpenAI shape, unchanged from upstream), `/v1/models`, `/health`, `/ready`. Schema definitions: `SynthesizeRequest`, `VoiceRecord`, `Error` envelope (matches `errors.py` taxonomy). Validate with a syntax check (`openapi-spec-validator` or equivalent stdlib YAML lint). | Yes (independent file) | PLANNED | UAT-DC-03 |
-| 5 | Cross-reference smoke test | Single new test (`tests/test_docs_inventory.py`) that programmatically asserts: (a) every env var name in `Settings.__post_init__` appears in `README.md` (UAT-CF-04), (b) every error-taxonomy `(type, code)` pair from `errors.py` appears in `README.md`, (c) every router prefix mounted by `create_app` has a matching OpenAPI `paths:` entry. Lightweight — runs in the standard unit suite. | No (depends on T1+T4) | PLANNED | UAT-DC-01, UAT-CF-04 |
+| 1 | README sections refresh | Update top-level `README.md` to current Sprint-5 state. Required sections: Hardware Auto-Detection (S-005 rules), full env-var inventory (S-012 — including TTS_VOICE_* and TTS_REFAUDIO_MAX_BYTES from Sprint 3), Rich endpoint (`POST /v1/tts/synthesize`) examples with full header inventory, Voice-CRUD endpoints under `/v1/tts/voices/*` with consent attestation note, seed-ingestion mechanism + `voice_map.json` legacy contract, storage-backend selection matrix (FS default vs `[postgres]`/`[s3]` extras), Error taxonomy table sourced from `src/llm_tts_api/errors.py`, **Voice biometric notice** verbatim per NFR-CP-01/NFR-PV-04, Sizing recommendations resolving SRS §5 C-1, link to `docs/perf/baseline.md` Performance section. | Yes (independent surface) | READY-FOR-REVIEW | UAT-DC-01, UAT-CF-04, NFR-CP-01, NFR-PV-04 |
+| 2 | Class diagrams refresh | Refresh `docs/diagrams/class/*.md` to current code. Add a new `voice-store.md` (FR-VS-01..12 producer/consumer Protocols + FS/Postgres/S3 backends). Update `overview.md` (router topology: `synthesize.py` + `audio.py` both delegate to `services/synthesize_service.py::synthesize_core`). Update `config-and-schemas.md` for new env vars + `SynthesizeRequest`. Update `providers.md` for the auto-selection capability table (S-006). All Mermaid syntax; match the per-component split llm-image-api uses (no monolithic mega-diagram). | Yes (independent files) | READY-FOR-REVIEW | FR-DC-02 |
+| 3 | Sequence diagrams refresh | Update + add `docs/diagrams/sequence/*.md` to current code. Refresh: `startup.md` (lifespan + warmup + ready toggle from S-003/S-010), `health-and-ready.md` (S-010 lock-free `/health`, drain semantics), `create-speech.md` (now a thin translator over `synthesize_core` per S-017). Add new: `synthesize-rich.md` (POST /v1/tts/synthesize buffered AND streamed paths from S-013/S-015), `voice-crud.md` (POST/GET/PUT/DELETE under /v1/tts/voices/* from S-025), `voice-seed-ingestion.md` (S-011 idempotent ingest + watchfiles reload). | Yes (independent files) | READY-FOR-REVIEW | UAT-DC-02 |
+| 4 | OpenAPI spec refresh | Refresh `docs/openapi/openapi.yaml` (or split by surface like llm-image-api's pattern). Must cover `/v1/tts/synthesize`, `/v1/tts/voices/*` (POST/GET list/GET one/GET audio/PUT/DELETE), `/v1/audio/speech` (OpenAI shape, unchanged from upstream), `/v1/models`, `/health`, `/ready`. Schema definitions: `SynthesizeRequest`, `VoiceRecord`, `Error` envelope (matches `errors.py` taxonomy). Validate with a syntax check (`openapi-spec-validator` or equivalent stdlib YAML lint). | Yes (independent file) | READY-FOR-REVIEW | UAT-DC-03 |
+| 5 | Cross-reference smoke test | Single new test (`tests/test_docs_inventory.py`) that programmatically asserts: (a) every env var name in `Settings.__post_init__` appears in `README.md` (UAT-CF-04), (b) every error-taxonomy `(type, code)` pair from `errors.py` appears in `README.md`, (c) every router prefix mounted by `create_app` has a matching OpenAPI `paths:` entry. Lightweight — runs in the standard unit suite. | No (depends on T1+T4) | READY-FOR-REVIEW | UAT-DC-01, UAT-CF-04 |
 
 #### Acceptance Criteria
 - README contains all required sections (UAT-DC-01); every new env var is documented (UAT-CF-04).
@@ -71,7 +71,7 @@ Standard gates (ruff, ruff format, mypy --strict, pytest, pip-audit) plus the ne
 ---
 
 ### S-020: Dockerfile + CI docker build update
-- **Status:** PLANNED
+- **Status:** READY-FOR-REVIEW
 - **Type:** Technical
 - **Parallel with:** S-019, S-021 (Step 1)
 - **Depends on (intra-sprint):** None
@@ -82,10 +82,10 @@ Standard gates (ruff, ruff format, mypy --strict, pytest, pip-audit) plus the ne
 
 | # | Task | Purpose | Parallel | Status | Refs |
 |---|------|---------|----------|--------|------|
-| 1 | Default `Dockerfile` refresh | Multi-stage build: builder isolates compiler toolchain; final image is slim Python 3.13, runs as non-root. Pinned base-image digest (no floating tags). Configuration by env vars (S-012 inventory) + volumes for `TTS_VOICE_STORE_DIR` and `TTS_VOICE_MAP_FILE`. `EXPOSE` the service port; `HEALTHCHECK` calls `/health`. Entrypoint launches uvicorn under tini (or `--use-colors=false` discipline so logs format cleanly per S-004). SIGTERM drain per S-010 — `TTS_SHUTDOWN_DRAIN_SECONDS` honored. | Yes (independent file) | PLANNED | NFR-OP-02, FR-QG-04 |
-| 2 | `Dockerfile.cuda` variant | CUDA-enabled base image (`nvidia/cuda:*-cudnn-runtime` family), pinned digest. CUDA torch wheel installed in builder stage; final image slim. Same env-var + volume + healthcheck + drain contract as the default. Default device override: `TTS_DEVICE=cuda` at runtime. Reject startup with `provider_error.no_viable_provider` if no CUDA-supporting provider is available (S-006). | Yes (independent file) | PLANNED | NFR-OP-02, OQ-5 |
-| 3 | CI build + smoke job for both variants | Add a `.github/workflows/docker.yml` (or extend existing CI). Build both images on PR + push. Smoke per image: start container, wait for `/health` returns 200 within 60 s, then SIGTERM and assert drain exits 0 within `TTS_SHUTDOWN_DRAIN_SECONDS`. Tag as `:ci` for the build, do not push to a registry. | No (consumes T1+T2) | PLANNED | UAT-QG-05, FR-QG-04 |
-| 4 | `.dockerignore` + image-size hygiene | New `.dockerignore` excludes `.git/`, `.worktrees/`, `tests/`, `docs/planning/`, `var/`, `.pending/`, etc. Aim for final image size under a reasonable threshold (record in PR). | Yes (independent file) | PLANNED | NFR-OP-02 |
+| 1 | Default `Dockerfile` refresh | Multi-stage build: builder isolates compiler toolchain; final image is slim Python 3.13, runs as non-root. Pinned base-image digest (no floating tags). Configuration by env vars (S-012 inventory) + volumes for `TTS_VOICE_STORE_DIR` and `TTS_VOICE_MAP_FILE`. `EXPOSE` the service port; `HEALTHCHECK` calls `/health`. Entrypoint launches uvicorn under tini (or `--use-colors=false` discipline so logs format cleanly per S-004). SIGTERM drain per S-010 — `TTS_SHUTDOWN_DRAIN_SECONDS` honored. | Yes (independent file) | READY-FOR-REVIEW | NFR-OP-02, FR-QG-04 |
+| 2 | `Dockerfile.cuda` variant | CUDA-enabled base image (`nvidia/cuda:*-cudnn-runtime` family), pinned digest. CUDA torch wheel installed in builder stage; final image slim. Same env-var + volume + healthcheck + drain contract as the default. Default device override: `TTS_DEVICE=cuda` at runtime. Reject startup with `provider_error.no_viable_provider` if no CUDA-supporting provider is available (S-006). | Yes (independent file) | READY-FOR-REVIEW | NFR-OP-02, OQ-5 |
+| 3 | CI build + smoke job for both variants | Add a `.github/workflows/docker.yml` (or extend existing CI). Build both images on PR + push. Smoke per image: start container, wait for `/health` returns 200 within 60 s, then SIGTERM and assert drain exits 0 within `TTS_SHUTDOWN_DRAIN_SECONDS`. Tag as `:ci` for the build, do not push to a registry. | No (consumes T1+T2) | READY-FOR-REVIEW | UAT-QG-05, FR-QG-04 |
+| 4 | `.dockerignore` + image-size hygiene | New `.dockerignore` excludes `.git/`, `.worktrees/`, `tests/`, `docs/planning/`, `var/`, `.pending/`, etc. Aim for final image size under a reasonable threshold (record in PR). | Yes (independent file) | READY-FOR-REVIEW | NFR-OP-02 |
 
 #### Acceptance Criteria
 - `docker build -t llm-tts-api:ci .` and `docker build -f Dockerfile.cuda -t llm-tts-api:ci-cuda .` both succeed in CI (UAT-QG-05).
@@ -100,7 +100,7 @@ CI builds both images and runs the smoke script (start, hit `/health`, SIGTERM, 
 ---
 
 ### S-021: Performance validation against baseline
-- **Status:** PLANNED
+- **Status:** READY-FOR-REVIEW
 - **Type:** Technical
 - **Parallel with:** S-019, S-020 (Step 1)
 - **Depends on (intra-sprint):** None
@@ -111,11 +111,11 @@ CI builds both images and runs the smoke script (start, hit `/health`, SIGTERM, 
 
 | # | Task | Purpose | Parallel | Status | Refs |
 |---|------|---------|----------|--------|------|
-| 1 | Re-run baseline scenario on rich endpoint | Use the same input (`tests/perf/fixtures/baseline_input.txt` from S-002), same voice `alloy`, same provider/model. Drive `POST /v1/tts/synthesize` via `scripts/perf_baseline.py` (already in repo). Record p50, p95, p99 latency and the commit SHA + date. | Yes (independent run) | PLANNED | NFR-PF-01 |
-| 2 | Re-run baseline scenario on OpenAI adapter | Same fixture, same voice, same model, but drive `POST /v1/audio/speech` (the S-017 thin translator path). Record the same metrics. The OpenAI path's wall-clock should match the rich path within noise — they share `synthesize_core`. | Yes (independent run) | PLANNED | NFR-PF-01, NFR-PT-03 |
-| 3 | `/health` responsiveness under load (NFR-PF-02) | Background a single synthesis request, in parallel hammer `/health` 100× and record p95 latency. Asserts ≤50 ms p95 per NFR-PF-02 / UAT-CC-02. | No (sequential with T1/T2 worker contention) | PLANNED | NFR-PF-02, UAT-CC-02 |
-| 4 | Concurrent throughput check | Spawn 4 parallel synthesis requests with `TTS_MAX_CONCURRENT_REQUESTS=2`. Assert total wall-clock is within ±20% of `2 × single-request time` (UAT-CC-01). | No (sequential) | PLANNED | UAT-CC-01 |
-| 5 | Record numbers + regression verdict | Append post-cycle p50/p95/p99 rows to `docs/perf/baseline.md` under a new "Sprint 6 post-cycle measurement" section, alongside the existing Sprint-1 baseline row. Compute regression vs Sprint-1 row; assert ≤+10% on p50 and p95. Document any methodology drift (e.g. warm-up runs, hardware). | No (consumes T1–T4) | PLANNED | NFR-PF-01, RISK-2 |
+| 1 | Re-run baseline scenario on rich endpoint | Use the same input (`tests/perf/fixtures/baseline_input.txt` from S-002), same voice `alloy`, same provider/model. Drive `POST /v1/tts/synthesize` via `scripts/perf_baseline.py` (already in repo). Record p50, p95, p99 latency and the commit SHA + date. | Yes (independent run) | READY-FOR-REVIEW | NFR-PF-01 |
+| 2 | Re-run baseline scenario on OpenAI adapter | Same fixture, same voice, same model, but drive `POST /v1/audio/speech` (the S-017 thin translator path). Record the same metrics. The OpenAI path's wall-clock should match the rich path within noise — they share `synthesize_core`. | Yes (independent run) | READY-FOR-REVIEW | NFR-PF-01, NFR-PT-03 |
+| 3 | `/health` responsiveness under load (NFR-PF-02) | Background a single synthesis request, in parallel hammer `/health` 100× and record p95 latency. Asserts ≤50 ms p95 per NFR-PF-02 / UAT-CC-02. | No (sequential with T1/T2 worker contention) | READY-FOR-REVIEW | NFR-PF-02, UAT-CC-02 |
+| 4 | Concurrent throughput check | Spawn 4 parallel synthesis requests with `TTS_MAX_CONCURRENT_REQUESTS=2`. Assert total wall-clock is within ±20% of `2 × single-request time` (UAT-CC-01). | No (sequential) | READY-FOR-REVIEW | UAT-CC-01 |
+| 5 | Record numbers + regression verdict | Append post-cycle p50/p95/p99 rows to `docs/perf/baseline.md` under a new "Sprint 6 post-cycle measurement" section, alongside the existing Sprint-1 baseline row. Compute regression vs Sprint-1 row; assert ≤+10% on p50 and p95. Document any methodology drift (e.g. warm-up runs, hardware). | No (consumes T1–T4) | READY-FOR-REVIEW | NFR-PF-01, RISK-2 |
 
 #### Acceptance Criteria
 - Rich + OpenAI p50 and p95 within +10% of S-002 baseline numbers.
