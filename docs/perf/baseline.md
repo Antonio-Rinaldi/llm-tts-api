@@ -48,3 +48,20 @@ The S-021 regression gate compares end-of-cycle numbers to the first row below. 
 - The script is intentionally minimal (stdlib `urllib`) so it has no extra deps and can run from any environment that can reach the service URL.
 - `Content-Length` (one-shot WAV) latency is reported, not time-to-first-byte. S-015 streaming will add a separate measurement.
 - The script drains the full response body so the measurement reflects synthesis completion, not header arrival.
+
+## RISK-8 byte-identity relaxation (NFR-PT-03b / SRS §5 G-1)
+
+NFR-PT-03b mandates that an OpenAI-adapter request and the equivalent rich-endpoint request produce byte-identical audio on a warm model (SRS §5 resolution G-1). RISK-8 acknowledges that real TTS providers may be non-deterministic; this section pins the documented relaxation contract referenced from SRS §5 G-1.
+
+**Strict path (gate of the equivalence claim).** `sha256(openai_body) == sha256(rich_body)`. Exercised by `tests/test_openai_adapter_parity.py::test_paired_byte_identity_strict` against the deterministic in-process `FakeTTSProvider` warm-model combo. Lives in the standard unit suite — no integration marker — because the in-process app + FakeTTSProvider runs in milliseconds and model load is already amortized by the rest of the suite (see S-018 impl notes, T4).
+
+**Relaxed fallback (RISK-8 materializes).** If a provider proves non-deterministic in CI, the paired UAT falls back to:
+
+| Bound                 | Tolerance | Rationale |
+|-----------------------|-----------|-----------|
+| Audio length          | ±1 PCM sample on `wave.getnframes()` of the first chunk WAV | Sample-level jitter from non-deterministic chunk boundaries; one-sample slack absorbs it without admitting an audible difference. |
+| Perceptual hash       | Hamming distance ≤ 1 over a 64-bit body fingerprint        | Catches whole-body divergence while permitting bit-level numerical noise. Implementation: `blake2b(body, digest_size=8)` — coarse-grained "did the synthesis go off the rails" check, deliberately cheap so the relaxation path adds no new deps. |
+
+The relaxation thresholds and code path are pinned in `tests/test_openai_adapter_parity.py::test_paired_byte_identity_relaxed_under_risk8` so the fallback contract is itself code-covered, not only documented in prose. On the deterministic FakeTTSProvider both bounds collapse to equality; the test still exercises the relaxation arithmetic to keep the contract live.
+
+**Escalation policy.** If the strict test starts flaking on a provider that was previously deterministic, the response is to switch *that provider's* paired test to the relaxed assertion and record the switch here (provider + commit SHA + date), not to delete the strict test. The strict path stays in CI for at least one deterministic provider/model combo per SRS §5 G-1.
