@@ -160,6 +160,7 @@ Each area lists the source FRs, NFRs, and UAT IDs. **For detailed wording, see s
 **Gap:** FR-OA-02 mandates "thin translator, no duplicated business logic" but nothing measurable enforces equivalence.
 **Resolution:** Add **NFR-PT-03b**: for a request through `/v1/audio/speech` and an equivalent request through `/v1/tts/synthesize` (same model, same input, same voice, same temperature/top_p/seed where applicable, no per-request overrides absent from the OpenAI shape), the audio output bytes MUST be byte-identical when both run on the same warm model. Verified by a paired UAT: synthesize via OA path, synthesize via rich path, `hashlib.sha256` compare.
 **New UAT:** **UAT-OA-05 (Happy)** — paired byte-identical synthesis.
+**RISK-8 fallback contract:** if a provider proves non-deterministic in CI, the paired UAT relaxes to `±1 PCM sample on audio length + perceptual hash within Hamming distance threshold`. The thresholds, rationale, and escalation policy are pinned in [`docs/perf/baseline.md` § "RISK-8 byte-identity relaxation"](../perf/baseline.md#risk-8-byte-identity-relaxation-nfr-pt-03b--srs-5-g-1) and the code path is covered by `tests/test_openai_adapter_parity.py::test_paired_byte_identity_relaxed_under_risk8`.
 
 ### Resolution G-2 — Voice map reload latency
 **Gap:** Latency budget for hot-reload was informal.
