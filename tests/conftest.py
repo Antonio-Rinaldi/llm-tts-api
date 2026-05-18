@@ -54,6 +54,8 @@ def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TTS_VOICE_MAP_FILE",
         "TTS_DEVICE",
         "TTS_DTYPE",
+        "TTS_MODEL_CACHE_SIZE",
+        "TTS_PRELOAD_MODELS",
         "APP_NAME",
         "APP_ENV",
         "APP_LOG_LEVEL",
@@ -84,6 +86,7 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     """
     from llm_tts_api.config import Settings
     from llm_tts_api.engine import DeviceProfile
+    from llm_tts_api.services.model_cache import LRUModelCache
     from llm_tts_api.services.model_registry import ModelRegistry
     from llm_tts_api.services.stt_service import STTService
     from llm_tts_api.services.tts_providers.auto_select import ProviderSelection
@@ -127,6 +130,7 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     )
     app_state.model_registry = ModelRegistry(settings)  # type: ignore[attr-defined]
     app_state.provider_registry = TTSProviderRegistry(providers=[])  # type: ignore[attr-defined]
+    app_state.model_cache = LRUModelCache(max_size=1)  # type: ignore[attr-defined]
     app_state.tts_service = fake_tts  # type: ignore[attr-defined]
     app_state.stt_service = STTService()  # type: ignore[attr-defined]
 

@@ -26,6 +26,7 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
     """
     from llm_tts_api.config import Settings
     from llm_tts_api.engine import DeviceProfile
+    from llm_tts_api.services.model_cache import LRUModelCache
     from llm_tts_api.services.model_registry import ModelRegistry
     from llm_tts_api.services.stt_service import STTService
     from llm_tts_api.services.tts_providers.auto_select import ProviderSelection
@@ -39,6 +40,8 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
     settings.tts_max_input_chars = 4096
     settings.tts_max_concurrent_requests = 1
     settings.tts_max_queue_depth = 8
+    settings.tts_model_cache_size = 1
+    settings.tts_preload_models = []
 
     return AppDependencies(
         settings=settings,
@@ -48,6 +51,7 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
         ),
         model_registry=object.__new__(ModelRegistry),
         provider_registry=TTSProviderRegistry(providers=[]),
+        model_cache=LRUModelCache(max_size=1),
         tts_service=fake,  # type: ignore[arg-type]
         stt_service=STTService(),
         concurrency_semaphore=asyncio.Semaphore(1),
@@ -124,6 +128,7 @@ def test_bypass_env_skips_construction(monkeypatch: pytest.MonkeyPatch) -> None:
         "provider_selection",
         "model_registry",
         "provider_registry",
+        "model_cache",
         "tts_service",
         "stt_service",
     ):

@@ -18,14 +18,16 @@ from typing import cast
 
 from fastapi import Request
 
-from llm_tts_api.config import Settings
+from llm_tts_api.config import PreloadEntry, Settings
 from llm_tts_api.engine import DeviceProfile, resolve_device_profile
+from llm_tts_api.services.model_cache import LRUModelCache
 from llm_tts_api.services.model_registry import ModelRegistry
 from llm_tts_api.services.stt_service import STTService
 from llm_tts_api.services.tts_providers.auto_select import (
     ProviderSelection,
     select_provider,
 )
+from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
 from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSProvider
 from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 from llm_tts_api.services.tts_providers.vllm_omni_provider import VllmOmniTTSProvider
@@ -48,6 +50,7 @@ class AppDependencies:
     provider_selection: ProviderSelection
     model_registry: ModelRegistry
     provider_registry: TTSProviderRegistry
+    model_cache: LRUModelCache
     tts_service: TTSService
     stt_service: STTService
     concurrency_semaphore: asyncio.Semaphore
@@ -68,13 +71,11 @@ def build_default_dependencies() -> AppDependencies:
     #   mps  → mlx_audio, voxtral
     #   cuda → vllm-omni
     #   cpu  → no current provider declares support → fails startup
-    provider_registry = TTSProviderRegistry(
-        providers=[
-            MLXAudioTTSProvider(),
-            VoxtralTTSProvider(),
-            VllmOmniTTSProvider(),
-        ]
-    )
+    mlx_audio = MLXAudioTTSProvider()
+    voxtral = VoxtralTTSProvider()
+    vllm_omni = VllmOmniTTSProvider()
+    providers: list[CachedModelProvider] = [mlx_audio, voxtral, vllm_omni]
+    provider_registry = TTSProviderRegistry(providers=[mlx_audio, voxtral, vllm_omni])
     provider_selection = select_provider(
         device_profile=device_profile,
         registry=provider_registry,
@@ -92,12 +93,19 @@ def build_default_dependencies() -> AppDependencies:
     )
     model_registry = ModelRegistry(settings)
     # S-007 concurrency primitives: queue admission, active cap, per-model locks.
-    # Constructed here so a single shared graph flows into both the TTSService
-    # (which consumes them at request time) and ``app.state`` slots (which
-    # S-010 / health & ready endpoints will read).
     concurrency_semaphore = asyncio.Semaphore(settings.tts_max_concurrent_requests)
     queue_semaphore = asyncio.Semaphore(settings.tts_max_queue_depth)
     model_locks: ModelLockMap = {}
+    # S-008: build the shared LRU cache, hand it to each provider with the
+    # provider-specific allow-list, then preload the configured pairs so
+    # the first synthesis incurs no load latency (FR-CA-04 / UAT-CA-03).
+    model_cache = LRUModelCache(max_size=settings.tts_model_cache_size)
+    for provider in providers:
+        provider.attach_model_cache(
+            model_cache,
+            allowed_models=settings.tts_model_allowed_for_provider(provider.provider_name),
+        )
+    _preload_models(provider_registry, settings.tts_preload_models)
     tts_service = TTSService(
         settings=settings,
         model_registry=model_registry,
@@ -113,12 +121,24 @@ def build_default_dependencies() -> AppDependencies:
         provider_selection=provider_selection,
         model_registry=model_registry,
         provider_registry=provider_registry,
+        model_cache=model_cache,
         tts_service=tts_service,
         stt_service=stt_service,
         concurrency_semaphore=concurrency_semaphore,
         queue_semaphore=queue_semaphore,
         model_locks=model_locks,
     )
+
+
+def _preload_models(
+    provider_registry: TTSProviderRegistry, preload_pairs: list[PreloadEntry]
+) -> None:
+    """Warm the cache for every ``provider:model`` pair from ``TTS_PRELOAD_MODELS``."""
+    for entry in preload_pairs:
+        provider = provider_registry.get(entry.provider)
+        preload_fn = getattr(provider, "preload", None)
+        if callable(preload_fn):
+            preload_fn(entry.model)
 
 
 # --- Request-aware Depends-shape getters ------------------------------------
@@ -161,3 +181,8 @@ def get_device_profile(request: Request) -> DeviceProfile:
 def get_provider_selection(request: Request) -> ProviderSelection:
     """Return the process-wide :class:`ProviderSelection` (S-006)."""
     return cast(ProviderSelection, request.app.state.provider_selection)
+
+
+def get_model_cache(request: Request) -> LRUModelCache:
+    """Return the process-wide :class:`LRUModelCache` (S-008)."""
+    return cast(LRUModelCache, request.app.state.model_cache)

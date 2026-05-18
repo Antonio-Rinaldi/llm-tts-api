@@ -82,6 +82,7 @@ def create_app() -> FastAPI:
             app.state.provider_selection = deps.provider_selection
             app.state.model_registry = deps.model_registry
             app.state.provider_registry = deps.provider_registry
+            app.state.model_cache = deps.model_cache
             app.state.tts_service = deps.tts_service
             app.state.stt_service = deps.stt_service
             # S-007 producer slots (consumed by S-010 /health for queue_depth
