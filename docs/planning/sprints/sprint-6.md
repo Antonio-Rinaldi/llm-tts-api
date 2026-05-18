@@ -129,7 +129,7 @@ Re-uses `scripts/perf_baseline.py` (S-002) for the measurement primitive. New `t
 ---
 
 ### S-026: Code-duplication refactor (cycle-end cleanup)
-- **Status:** PLANNED
+- **Status:** READY-FOR-REVIEW
 - **Type:** Technical
 - **Parallel with:** None within this sprint
 - **Depends on (intra-sprint):** S-019, S-020, S-021 (cycle-end terminal — runs LAST)
@@ -140,13 +140,13 @@ Re-uses `scripts/perf_baseline.py` (S-002) for the measurement primitive. New `t
 
 | # | Task | Purpose | Parallel | Status | Refs |
 |---|------|---------|----------|--------|------|
-| 1 | Duplication inventory | Survey `src/llm_tts_api/` for accidental duplication. Concrete suspects from Sprints 1–5: (a) the `X-*` header inventory is constructed in both `synthesize.py` and `synthesize_service.py`; (b) error-envelope construction is repeated across routers; (c) voice-id regex + path validation is in `records.py` AND inline in `fs_blob.py`; (d) provider-allow-list extraction (`settings.tts_*_model_allowed`) is iterated in 3+ sites; (e) test fixtures `_seed_voice` and `_stub_app_state` overlap. Record findings in impl notes BEFORE touching code. | No (foundation) | PLANNED | NFR-MT-01 |
-| 2 | Consolidate header inventory | Move the `X-*` header set to a single module-level constant in `synthesize_service.py` (or new `services/headers.py`). Both rich-endpoint and OpenAI paths consume from the same source; S-017's `_RICH_ONLY_HEADERS` becomes a derived view. Net effect: deleting one site, both still produce the same headers. | Yes (with T3/T4 — independent surface) | PLANNED | NFR-MT-02, NFR-PT-03 |
-| 3 | Consolidate error-envelope helpers | If `errors.py` has any redundant construction logic vs router-level helpers, merge. Keep the OpenAI-compatible envelope shape byte-identical. | Yes | PLANNED | BR-9, NFR-MT-02 |
-| 4 | Consolidate voice-id validation | Move the `[a-z0-9_-]{1,64}` regex + the path-traversal guard into one helper in `records.py` (or `voice_store/validation.py`); inline copies in repository implementations call it. | Yes | PLANNED | NFR-MT-02, NFR-SE-03 |
-| 5 | Consolidate allow-list scattering | Single accessor (`Settings.allowed_models_for(provider)` or `ModelRegistry.allowed_for(provider)`) replaces hardcoded `settings.tts_mlx_audio_model_allowed` / `settings.tts_voxtral_model_allowed` reads. | Yes | PLANNED | NFR-MT-02 |
-| 6 | Test-fixture dedup | If `_seed_voice` (from `test_openai_adapter.py` and elsewhere) and `_stub_app_state` (`conftest.py`) overlap, merge into `tests/fakes/`. Importable from both. | Yes | PLANNED | NFR-MT-02 |
-| 7 | LOC + behavior gates | Measure: `tokei src/llm_tts_api/` before vs after; require ≥3% net production LOC reduction. Re-run `uv run pytest` — S-018 byte-identity test must pass UNCHANGED (no test modifications allowed there). Verify `docs/openapi/openapi.yaml` is byte-identical OR diff is purely cosmetic (with explicit per-line justification). | No (verifies T2–T6) | PLANNED | NFR-MT-01..04, BR-9 |
+| 1 | Duplication inventory | Survey `src/llm_tts_api/` for accidental duplication. Concrete suspects from Sprints 1–5: (a) the `X-*` header inventory is constructed in both `synthesize.py` and `synthesize_service.py`; (b) error-envelope construction is repeated across routers; (c) voice-id regex + path validation is in `records.py` AND inline in `fs_blob.py`; (d) provider-allow-list extraction (`settings.tts_*_model_allowed`) is iterated in 3+ sites; (e) test fixtures `_seed_voice` and `_stub_app_state` overlap. Record findings in impl notes BEFORE touching code. | No (foundation) | READY-FOR-REVIEW | NFR-MT-01 |
+| 2 | Consolidate header inventory | Move the `X-*` header set to a single module-level constant in `synthesize_service.py` (or new `services/headers.py`). Both rich-endpoint and OpenAI paths consume from the same source; S-017's `_RICH_ONLY_HEADERS` becomes a derived view. Net effect: deleting one site, both still produce the same headers. | Yes (with T3/T4 — independent surface) | READY-FOR-REVIEW | NFR-MT-02, NFR-PT-03 |
+| 3 | Consolidate error-envelope helpers | If `errors.py` has any redundant construction logic vs router-level helpers, merge. Keep the OpenAI-compatible envelope shape byte-identical. | Yes | READY-FOR-REVIEW | BR-9, NFR-MT-02 |
+| 4 | Consolidate voice-id validation | Move the `[a-z0-9_-]{1,64}` regex + the path-traversal guard into one helper in `records.py` (or `voice_store/validation.py`); inline copies in repository implementations call it. | Yes | READY-FOR-REVIEW | NFR-MT-02, NFR-SE-03 |
+| 5 | Consolidate allow-list scattering | Single accessor (`Settings.allowed_models_for(provider)` or `ModelRegistry.allowed_for(provider)`) replaces hardcoded `settings.tts_mlx_audio_model_allowed` / `settings.tts_voxtral_model_allowed` reads. | Yes | READY-FOR-REVIEW | NFR-MT-02 |
+| 6 | Test-fixture dedup | If `_seed_voice` (from `test_openai_adapter.py` and elsewhere) and `_stub_app_state` (`conftest.py`) overlap, merge into `tests/fakes/`. Importable from both. | Yes | READY-FOR-REVIEW | NFR-MT-02 |
+| 7 | LOC + behavior gates | Measure: `tokei src/llm_tts_api/` before vs after; require ≥3% net production LOC reduction. Re-run `uv run pytest` — S-018 byte-identity test must pass UNCHANGED (no test modifications allowed there). Verify `docs/openapi/openapi.yaml` is byte-identical OR diff is purely cosmetic (with explicit per-line justification). | No (verifies T2–T6) | READY-FOR-REVIEW | NFR-MT-01..04, BR-9 |
 
 #### Acceptance Criteria
 - Net production LOC reduction ≥ 3% vs Step-1-end master (measured `tokei` or `cloc` on `src/llm_tts_api/`).

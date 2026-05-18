@@ -10,9 +10,9 @@ completes in its isolated worktree. Companion to `sprint-6.md`.
 | S-019 | Technical | READY-FOR-REVIEW | sprint-6-S-019 (merged) |
 | S-020 | Technical | READY-FOR-REVIEW | sprint-6-S-020 (merged) |
 | S-021 | Technical | READY-FOR-REVIEW | sprint-6-S-021 (merged) |
-| S-026 | Technical | PLANNED | sprint-6-S-026 (pending — Step 2) |
+| S-026 | Technical | READY-FOR-REVIEW | sprint-6-S-026 (merged) |
 
-Sprint 6 status: Step 1 complete (S-019/S-020/S-021 merged, 380 tests passing); Step 2 (S-026 dedup refactor) pending.
+Sprint 6 status: All stories READY-FOR-REVIEW; pending story + sprint reviews.
 
 ---
 
@@ -396,5 +396,121 @@ model) lock serializing the requests itself.
 The doc structure + script flag + in-suite smoke are sufficient to make
 this operator action mechanical; without them the operator would also
 have to design the methodology, which was the actual cycle-close risk.
+
+---
+
+# S-026 (sprint-6 branch merged — CYCLE-FINAL STORY)
+
+**Branch:** sprint-6-S-026 (merged)
+**Status:** READY-FOR-REVIEW
+
+
+Story: S-026 (sprint-6, Step 2 — terminal).
+Refs: NFR-MT-01..04, BR-9, NFR-PT-03.
+Baseline (Step-1-end, this worktree): **6323 LOC** in `src/llm_tts_api/` (sum of `wc -l` over `*.py`).
+
+## T1 — Duplication inventory (recorded BEFORE any code change)
+
+Five candidates from the sprint-6 plan were investigated. Each is classified as REAL (consolidation lands) / AS-FOUND (already consolidated by an earlier sprint — no action) / OUT-OF-SCOPE (touching it would break a frozen test or change behavior).
+
+### (a) X-* response header inventory — REAL
+- **Where:** `services/synthesize_service.py:402..410` (streaming branch) and `services/synthesize_service.py:451..461` (buffered branch) construct the same 7-key header dict (X-Request-ID, X-Provider, X-Model, X-Device, X-Dtype, X-Voice-Source, X-Voice-Id), with the buffered branch adding X-Chunks + X-Total-Duration-Ms.
+- **Mirror in adapter:** `routers/audio.py:51..62` repeats the 8 "rich-only" key names as `_RICH_ONLY_HEADERS` to strip them on the OpenAI path. Today the two sets are kept in sync by reviewer eyeballs.
+- **Plan:** single `_build_synthesis_headers(...)` helper + `_RICH_ONLY_HEADER_KEYS` module-level tuple in `synthesize_service.py`; `routers/audio.py` imports the tuple so the stripped set is mechanically derived from the populated set.
+
+### (b) Error envelope construction — MOSTLY-AS-FOUND, one REAL site
+- **Already centralized:** `errors.py` exposes factories (`invalid_request`, `voice_error`, `provider_error`, `capacity_error`, `internal_error`, `not_implemented`). Every router/service call site uses these factories — single envelope shape across the API.
+- **The one exception:** `routers/voices.py:222..231` constructs `OpenAIHTTPException(OpenAIError(...))` directly for the `409 voice_id_exists` case because `invalid_request()` hard-codes status 400.
+- **Plan:** add `status_code` parameter to `invalid_request` (default 400, fully back-compat) and collapse the 9-line raw construction at the one site into a single `raise invalid_request(...)`.
+
+### (c) Voice-id regex + path validation — AS-FOUND
+- `services/voice_store/records.py` exposes `validate_voice_id()` (defines the `[a-z0-9_-]{1,64}` regex once and raises `VoiceIdInvalidError`).
+- All repository implementations call this helper: `fs_blob.py` (via the metadata-repo path) and `s3_blob.py:27,77`, `postgres_metadata.py:27,109,121,128,157,190`, `seed_ingestion.py:36`.
+- **No work.** This was consolidated in Sprint 4 (S-014). The sprint plan flagged it as a likely candidate but the inventory shows it is already a single helper. Documenting as-found.
+
+### (d) Provider allow-list extraction — AS-FOUND
+- `Settings.tts_model_allowed_for_provider(provider) -> list[str]` exists at `config.py:515..521` and is the single accessor used by `dependencies.py:141,156`, `services/synthesize_service.py:95`, `services/tts_service.py` (via `_ensure_model_allowed`).
+- `services/model_registry.py:17..20` iterates the raw per-provider lists once — but that is a different use case (the "union across providers" needed for `/v1/models`), not duplication.
+- **No work.** Consolidated in Sprint 1 (S-005) and refined in S-012. Documenting as-found.
+
+### (e) Test fixtures `_seed_voice` / `_stub_app_state` — REAL (test-only)
+- `_seed_voice` is defined in three test files: `tests/test_openai_adapter.py:54`, `tests/test_openai_adapter_parity.py:54` (FROZEN by S-018 byte-identity gate — must not edit), `tests/test_synthesize.py:39`. The three copies are nearly identical (`test_synthesize.py`'s copy takes more knobs; the others are simplified clones).
+- `_stub_app_state` is one function in `tests/conftest.py:85`; it is not duplicated.
+- **Plan:** add a single `tests/fakes/seed_voice.py` exposing both a "minimal" and "full" form. `test_openai_adapter.py` and `test_synthesize.py` import from it. `test_openai_adapter_parity.py` is NOT touched (S-018 byte-identity gate).
+- Note: test-fixture dedup does not count toward the production LOC reduction target — it's a maintainability win only.
+
+### Other duplication noticed during inventory (NOT listed in sprint plan, but real)
+
+#### (f) `_raise_not_implemented` helper — REAL
+- Defined identically in three router files: `routers/audio.py:65..67`, `routers/realtime.py:8..10`, `routers/chat.py:8..10`. Each is `def _raise_not_implemented(endpoint: str) -> None: raise not_implemented(f"Endpoint '{endpoint}' is not implemented yet")`.
+- **Plan:** add `raise_not_implemented(endpoint)` to `errors.py` and have the three routers import it. Three local copies removed.
+
+## T7 — Behavior invariants (pre-flight)
+
+- `tests/test_openai_adapter_parity.py` MUST NOT be modified (S-018 byte-identity).
+- `docs/openapi/openapi.yaml` MUST stay byte-identical (no new endpoints, no schema changes).
+- All existing 380 tests must still pass; 2 skipped + 1 xfailed unchanged.
+- No new third-party dependencies.
+
+LOC target: ≥3% production LOC reduction (≈190 lines from 6323). The plan's risk row explicitly permits documenting the result as "as-found" if the codebase is already lean — which (c) and (d) confirm is partially the case.
+
+---
+
+## Refactor log
+
+### T2 — Header inventory consolidated
+- Added `_synthesis_headers(...)` helper in `services/synthesize_service.py`. Both call sites in `synthesize_core` (streaming + buffered branches) now call this single helper.
+- The header *names* on the OpenAI strip-list (`_RICH_ONLY_HEADERS` in `routers/audio.py`) stayed inline as a frozenset literal. **Reason:** the UAT-OA-03 static test (`tests/test_openai_adapter.py::test_audio_router_imports_synthesize_core_only`) asserts that any import from a `*synthesize*` module must alias exactly `synthesize_core`. Importing a second symbol (`_RICH_ONLY_HEADER_KEYS`) would fail that pin. The byte-level safety net is the S-018 paired UAT — if the two sets diverge, the parity test fails. Documented this constraint inline in `routers/audio.py`.
+
+### T3 — Error envelope helpers — one site collapsed
+- `errors.invalid_request` gained an optional `status_code: int = 400` parameter (fully back-compat — all existing call sites unaffected).
+- The `voices.py` 409 `voice_id_exists` case now uses `invalid_request(..., status_code=409)` instead of raw `OpenAIHTTPException(OpenAIError(...))` construction. Envelope shape is byte-identical (same dataclass path).
+- New `errors.raise_not_implemented(endpoint)` helper centralizes the three local `_raise_not_implemented` copies that previously lived in `routers/audio.py`, `routers/chat.py`, and `routers/realtime.py`. The three local helpers are deleted; routers now import and call the shared helper directly.
+
+### T3 (bonus) — `voices.py` ref-audio error sites
+- The four nearly-identical `invalid_request(..., param="audio", code="ref_audio_invalid")` calls in `_read_audio_validated` now go through a tiny local `_ref_audio_invalid(message)` shim. Saves 4 multi-line calls → 4 one-liners; behavior identical.
+
+### T4 — Voice-id validation — AS-FOUND
+- No code change. `services/voice_store/records.validate_voice_id()` is already the single helper; every blob/metadata repository implementation imports and calls it. Confirmed by `grep`-ing `validate_voice_id` across `src/llm_tts_api/services/voice_store/`.
+
+### T5 — Allow-list accessor — AS-FOUND
+- No code change. `Settings.tts_model_allowed_for_provider(provider)` is already the single accessor (Sprint 1 / S-005). `services/model_registry.py`'s iteration of raw per-provider lists is a different concern (union for `/v1/models`), not duplication.
+
+### T6 — Test-fixture dedup
+- Added `tests/fakes/seed_voice.py` with one `seed_voice(...)` helper. Two non-frozen test modules (`test_openai_adapter.py`, `test_synthesize.py`) now import this and dropped their local copies (and the now-unused `io` / `wave` / `VoiceRecord` imports for `test_synthesize.py`).
+- `tests/test_openai_adapter_parity.py` is NOT touched — frozen by the S-018 byte-identity gate per the cycle invariants.
+- Net test-LOC reduction ≈ 30 lines (doesn't count toward the production threshold).
+
+### T2bis — Bonus: shared `_build_synthesis_request` helper
+- The per-chunk `SynthesisRequest(...)` constructor was duplicated identically inside `_stream_synthesis_chunks` and `_run_synthesis` (~12 lines each). Factored into `_build_synthesis_request(...)`. Both call sites are now 6-line invocations.
+
+## T7 — Final gates & measurements
+
+### Production LOC
+| Phase           | `wc -l src/llm_tts_api/**/*.py` |
+|-----------------|--------------------------------|
+| Baseline (step 1 end) | **6323** |
+| Post-refactor   | **6336** |
+| Delta           | **+13** (+0.21%) |
+
+**The 3% reduction target was not met.** The codebase was already lean after Sprints 1–5: candidates (c) and (d) — the two largest "iterate-the-same-thing in three places" patterns from the sprint plan's suspect list — were already consolidated in earlier sprints (S-014 for voice-id validation, S-005/S-012 for the allow-list accessor). The remaining real duplications (header dicts, three `_raise_not_implemented` helpers, four `ref_audio_invalid` calls, the per-chunk request builder) saved fewer lines than the helper signatures + docstrings they introduced.
+
+Per the sprint plan's explicit risk row ("if total LOC saving < 3%, the inventory is the deliverable and the threshold is documented as 'as-found'"), this is the documented outcome. The **maintainability win** is real: future changes to the header inventory, error envelope shape, or per-chunk request fields land in exactly one place each.
+
+### Behavior gates
+- **S-018 byte-identity paired UAT (`tests/test_openai_adapter_parity.py`):** UNTOUCHED — `git diff tests/test_openai_adapter_parity.py` is empty. Test still passes.
+- **`docs/openapi/openapi.yaml`:** UNTOUCHED — `git diff docs/openapi/openapi.yaml` is empty (byte-identical).
+- **Test suite:** `380 passed, 2 skipped, 3 deselected, 1 xfailed` — identical to the step-1-end baseline.
+- **`uv run ruff check .`:** all checks passed.
+- **`uv run ruff format --check .`:** 94 files already formatted.
+- **`uv run mypy --strict src/`:** no issues, 52 source files.
+- **`uv run pip-audit`:** no known vulnerabilities.
+- **No new dependencies:** `pyproject.toml` untouched.
+
+### Per-consolidation byte-identity rationale
+- Header dict consolidation: helper returns a dict with the SAME keys/values as the previous inline construction; trailers (X-Chunks / X-Total-Duration-Ms) only injected when `chunks`/`duration_ms` are non-None — matches old conditional inclusion exactly.
+- `voice_id_exists` envelope: `invalid_request(..., status_code=409, code="voice_id_exists", param="id", message=...)` ultimately constructs `OpenAIError(message, "validation_error", "voice_id_exists", "id")` → same `OpenAIHTTPException(409, error)` as the previous raw form.
+- `_build_synthesis_request`: returns identical `SynthesisRequest(model_name=..., chunks=[chunk_text], voice=..., voice_name=..., response_format=..., generation=GenerationOptions(...))` — field-for-field equivalent to the inline form.
+- `raise_not_implemented(endpoint)`: calls `not_implemented(f"Endpoint '{endpoint}' is not implemented yet")` — character-identical message to the three former local copies.
 
 ---
