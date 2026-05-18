@@ -87,6 +87,11 @@ class Settings:
     tts_min_free_memory_gb: int = 4
     app_log_format: str = "text"
 
+    # S-022 — root directory for the FS-default voice store. Both
+    # ``FsJsonMetadataRepository`` (single ``metadata.json``) and
+    # ``FsBlobRepository`` (``blobs/<id>.wav``) live underneath it.
+    tts_voice_store_dir: Path = field(default_factory=lambda: Path("var/voices"))
+
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
         self._load_app_identity()
@@ -94,7 +99,13 @@ class Settings:
         self._load_stt_models()
         self._load_tts_limits()
         self._load_runtime_knobs()
+        self._load_voice_store_dir()
         self.tts_voice_map = self._load_voice_map_from_file()
+
+    def _load_voice_store_dir(self) -> None:
+        """Resolve ``TTS_VOICE_STORE_DIR`` (default ``var/voices/``)."""
+        raw = os.environ.get("TTS_VOICE_STORE_DIR", "").strip()
+        self.tts_voice_store_dir = Path(raw) if raw else Path("var/voices")
 
     @staticmethod
     def _split_csv(raw: str) -> list[str]:

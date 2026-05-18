@@ -166,6 +166,10 @@ def create_app() -> FastAPI:
                 app.state.concurrency_semaphore = deps.concurrency_semaphore
                 app.state.queue_semaphore = deps.queue_semaphore
                 app.state.model_locks = deps.model_locks
+                # S-022 voice-store repos. Consumed by S-025 CRUD + S-011 seed
+                # ingestion via Depends(get_voice_metadata_repo/_blob_repo).
+                app.state.voice_metadata_repo = deps.voice_metadata_repo
+                app.state.voice_blob_repo = deps.voice_blob_repo
                 _emit_low_memory_warning(deps.settings.tts_min_free_memory_gb)
                 drain_seconds = deps.settings.tts_shutdown_drain_seconds
                 app.state.ready = True

@@ -33,6 +33,12 @@ from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 from llm_tts_api.services.tts_providers.vllm_omni_provider import VllmOmniTTSProvider
 from llm_tts_api.services.tts_providers.voxtral_provider import VoxtralTTSProvider
 from llm_tts_api.services.tts_service import ModelLockMap, TTSService
+from llm_tts_api.services.voice_store import (
+    FsBlobRepository,
+    FsJsonMetadataRepository,
+    VoiceBlobRepository,
+    VoiceMetadataRepository,
+)
 
 
 @dataclass(slots=True)
@@ -55,6 +61,8 @@ class AppDependencies:
     stt_service: STTService
     concurrency_semaphore: asyncio.Semaphore
     queue_semaphore: asyncio.Semaphore
+    voice_metadata_repo: VoiceMetadataRepository
+    voice_blob_repo: VoiceBlobRepository
     model_locks: ModelLockMap = field(default_factory=dict)
 
 
@@ -115,6 +123,12 @@ def build_default_dependencies() -> AppDependencies:
         model_locks=model_locks,
     )
     stt_service = STTService()
+    # S-022: voice-store FS defaults rooted at ``settings.tts_voice_store_dir``.
+    # Step-2 stories swap these for Postgres/S3 implementations behind extras.
+    voice_metadata_repo: VoiceMetadataRepository = FsJsonMetadataRepository(
+        settings.tts_voice_store_dir
+    )
+    voice_blob_repo: VoiceBlobRepository = FsBlobRepository(settings.tts_voice_store_dir)
     return AppDependencies(
         settings=settings,
         device_profile=device_profile,
@@ -126,6 +140,8 @@ def build_default_dependencies() -> AppDependencies:
         stt_service=stt_service,
         concurrency_semaphore=concurrency_semaphore,
         queue_semaphore=queue_semaphore,
+        voice_metadata_repo=voice_metadata_repo,
+        voice_blob_repo=voice_blob_repo,
         model_locks=model_locks,
     )
 
@@ -186,3 +202,13 @@ def get_provider_selection(request: Request) -> ProviderSelection:
 def get_model_cache(request: Request) -> LRUModelCache:
     """Return the process-wide :class:`LRUModelCache` (S-008)."""
     return cast(LRUModelCache, request.app.state.model_cache)
+
+
+def get_voice_metadata_repo(request: Request) -> VoiceMetadataRepository:
+    """Return the process-wide :class:`VoiceMetadataRepository` (S-022)."""
+    return cast(VoiceMetadataRepository, request.app.state.voice_metadata_repo)
+
+
+def get_voice_blob_repo(request: Request) -> VoiceBlobRepository:
+    """Return the process-wide :class:`VoiceBlobRepository` (S-022)."""
+    return cast(VoiceBlobRepository, request.app.state.voice_blob_repo)

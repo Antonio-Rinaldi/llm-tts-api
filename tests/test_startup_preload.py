@@ -31,6 +31,10 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
     from llm_tts_api.services.stt_service import STTService
     from llm_tts_api.services.tts_providers.auto_select import ProviderSelection
     from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
+    from tests.fakes.fake_voice_store import (
+        FakeVoiceBlobRepository,
+        FakeVoiceMetadataRepository,
+    )
 
     settings = object.__new__(Settings)  # bypass __post_init__'s env reads
     settings.app_name = "llm-tts-api"
@@ -58,6 +62,8 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
         stt_service=STTService(),
         concurrency_semaphore=asyncio.Semaphore(1),
         queue_semaphore=asyncio.Semaphore(8),
+        voice_metadata_repo=FakeVoiceMetadataRepository(),
+        voice_blob_repo=FakeVoiceBlobRepository(),
         model_locks={},
     )
 

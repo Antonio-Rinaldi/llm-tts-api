@@ -66,6 +66,7 @@ def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TTS_INFERENCE_TIMEOUT_SECONDS",
         "TTS_SHUTDOWN_DRAIN_SECONDS",
         "TTS_MIN_FREE_MEMORY_GB",
+        "TTS_VOICE_STORE_DIR",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -122,6 +123,7 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     settings.tts_shutdown_drain_seconds = 30
     settings.tts_min_free_memory_gb = 0
     settings.app_log_format = "text"
+    settings.tts_voice_store_dir = Path("var/voices")
 
     app_state.settings = settings  # type: ignore[attr-defined]
     app_state.device_profile = DeviceProfile(  # type: ignore[attr-defined]
@@ -144,6 +146,15 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     )
     app_state.queue_semaphore = _asyncio.Semaphore(settings.tts_max_queue_depth)  # type: ignore[attr-defined]
     app_state.model_locks = {}  # type: ignore[attr-defined]
+    # S-022 voice-store slots — use in-memory fakes so tests neither write
+    # to disk nor depend on an actual TTS_VOICE_STORE_DIR layout.
+    from tests.fakes.fake_voice_store import (
+        FakeVoiceBlobRepository,
+        FakeVoiceMetadataRepository,
+    )
+
+    app_state.voice_metadata_repo = FakeVoiceMetadataRepository()  # type: ignore[attr-defined]
+    app_state.voice_blob_repo = FakeVoiceBlobRepository()  # type: ignore[attr-defined]
     # S-010: ready-flag default for the happy-path fixture. UAT-HL-02 toggles
     # this directly in test bodies that need the not-ready path.
     app_state.ready = True  # type: ignore[attr-defined]
