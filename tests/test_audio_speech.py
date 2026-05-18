@@ -59,7 +59,7 @@ def test_speech_rejects_empty_input(monkeypatch, tmp_path: Path) -> None:
 
     assert response.status_code == 400
     payload = response.json()
-    assert payload["error"]["type"] == "invalid_request_error"
+    assert payload["error"]["type"] == "validation_error"
     assert payload["error"]["param"] == "input"
 
 
@@ -73,7 +73,7 @@ def test_speech_rejects_unmapped_voice(monkeypatch, tmp_path: Path) -> None:
 
     assert response.status_code == 400
     payload = response.json()
-    assert payload["error"]["type"] == "invalid_request_error"
+    assert payload["error"]["type"] == "validation_error"
     assert payload["error"]["param"] == "voice"
 
 
@@ -87,7 +87,7 @@ def test_speech_rejects_disallowed_model(monkeypatch, tmp_path: Path) -> None:
 
     assert response.status_code == 400
     payload = response.json()
-    assert payload["error"]["type"] == "invalid_request_error"
+    assert payload["error"]["type"] == "validation_error"
     assert payload["error"]["param"] == "model"
 
 

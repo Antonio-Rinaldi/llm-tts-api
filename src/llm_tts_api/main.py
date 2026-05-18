@@ -18,12 +18,18 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from starlette.requests import Request
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from llm_tts_api.app_logging import setup_logging
 from llm_tts_api.dependencies import build_default_dependencies
-from llm_tts_api.errors import OpenAIHTTPException
+from llm_tts_api.errors import (
+    OpenAIHTTPException,
+    http_exception_handler,
+    openai_exception_handler,
+    unhandled_exception_handler,
+    validation_exception_handler,
+)
 from llm_tts_api.observability import RequestIDMiddleware
 from llm_tts_api.routers.audio import router as audio_router
 from llm_tts_api.routers.chat import router as chat_router
@@ -82,10 +88,13 @@ def create_app() -> FastAPI:
     app = FastAPI(title="llm-tts-api", lifespan=lifespan)
     app.add_middleware(RequestIDMiddleware)
 
-    @app.exception_handler(OpenAIHTTPException)
-    async def openai_exception_handler(_: Request, exc: OpenAIHTTPException) -> JSONResponse:
-        """Return OpenAI-compatible error envelopes."""
-        return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+    # S-009 error envelope handlers. Order matters: register the most-specific
+    # handler (OpenAIHTTPException) first so it wins over the broader
+    # ``HTTPException`` handler that catches bare 404s from the router.
+    app.add_exception_handler(OpenAIHTTPException, openai_exception_handler)
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(Exception, unhandled_exception_handler)
 
     app.include_router(health_router)
     app.include_router(models_router)
