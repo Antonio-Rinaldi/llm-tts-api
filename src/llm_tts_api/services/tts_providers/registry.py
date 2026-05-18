@@ -20,3 +20,15 @@ class TTSProviderRegistry:
                 param="provider",
             )
         return provider
+
+    def names(self) -> list[str]:
+        """Return registered provider names in registration order."""
+        return list(self._providers.keys())
+
+    def all(self) -> list[TTSProviderStrategy]:
+        """Return registered provider instances in registration order."""
+        return list(self._providers.values())
+
+    def find(self, provider_name: str) -> TTSProviderStrategy | None:
+        """Return a provider strategy or ``None`` when not registered."""
+        return self._providers.get(provider_name)

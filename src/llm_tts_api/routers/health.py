@@ -1,3 +1,16 @@
+"""Liveness + readiness endpoints.
+
+S-006 extends ``/health`` to report the auto-selected provider and the
+source label (``auto`` for capability-derived, ``env`` for an explicit
+``TTS_PROVIDER`` override). Per UAT-HW-04..05 operators rely on this field
+to confirm the boot-time decision matches their expectations.
+
+S-010 will expand this body with semaphore/queue depth fields; the
+``provider`` / ``provider_source`` keys are stable from S-006 onward.
+"""
+
+from __future__ import annotations
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -5,9 +18,21 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
-def health() -> dict[str, str]:
-    """Liveness probe used by process supervisors."""
-    return {"status": "ok"}
+def health(request: Request) -> dict[str, str]:
+    """Liveness probe + provider self-report.
+
+    The probe always returns 200 once the process is up; consumers that
+    need readiness gating call ``/ready`` instead. The body advertises the
+    selected provider and its source so operators can verify
+    auto-selection (FR-HW-04..07).
+    """
+    body: dict[str, str] = {"status": "ok"}
+    selection = getattr(request.app.state, "provider_selection", None)
+    if selection is not None:
+        body["provider"] = selection.provider_name
+        body["provider_source"] = selection.source
+        body["device"] = selection.device
+    return body
 
 
 @router.get("/ready")

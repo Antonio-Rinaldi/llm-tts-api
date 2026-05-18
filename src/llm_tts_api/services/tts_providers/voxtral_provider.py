@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf  # type: ignore[import-untyped]
 
+from llm_tts_api.engine import Device
 from llm_tts_api.errors import invalid_request
 from llm_tts_api.services.tts_providers.base import SynthesisRequest
 from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
@@ -17,6 +18,9 @@ class VoxtralTTSProvider(CachedModelProvider):
     """Voxtral provider strategy restricted to reference-audio cloning mode."""
 
     provider_name = "voxtral"
+    # Voxtral models are loaded through mlx-audio, so they share the
+    # Apple-Silicon Metal-only constraint of the mlx_audio provider.
+    supports_devices: frozenset[Device] = frozenset({"mps"})
 
     def _load_model(self, model_name: str) -> Any:
         """Load and return a Voxtral model through mlx-audio."""

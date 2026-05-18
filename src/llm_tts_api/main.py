@@ -79,6 +79,7 @@ def create_app() -> FastAPI:
             deps = build_default_dependencies()
             app.state.settings = deps.settings
             app.state.device_profile = deps.device_profile
+            app.state.provider_selection = deps.provider_selection
             app.state.model_registry = deps.model_registry
             app.state.provider_registry = deps.provider_registry
             app.state.tts_service = deps.tts_service

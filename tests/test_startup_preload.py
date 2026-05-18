@@ -26,6 +26,7 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
     from llm_tts_api.engine import DeviceProfile
     from llm_tts_api.services.model_registry import ModelRegistry
     from llm_tts_api.services.stt_service import STTService
+    from llm_tts_api.services.tts_providers.auto_select import ProviderSelection
     from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 
     settings = object.__new__(Settings)  # bypass __post_init__'s env reads
@@ -39,6 +40,9 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
     return AppDependencies(
         settings=settings,
         device_profile=DeviceProfile(device="cpu", dtype="float32", source="auto"),
+        provider_selection=ProviderSelection(
+            provider_name="mlx_audio", device="cpu", source="auto"
+        ),
         model_registry=object.__new__(ModelRegistry),
         provider_registry=TTSProviderRegistry(providers=[]),
         tts_service=fake,  # type: ignore[arg-type]
@@ -111,6 +115,7 @@ def test_bypass_env_skips_construction(monkeypatch: pytest.MonkeyPatch) -> None:
     for slot in (
         "settings",
         "device_profile",
+        "provider_selection",
         "model_registry",
         "provider_registry",
         "tts_service",
