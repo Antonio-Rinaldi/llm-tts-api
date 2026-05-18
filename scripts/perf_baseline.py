@@ -1,16 +1,20 @@
-"""Measure /v1/audio/speech latency on a running llm-tts-api instance.
+"""Measure synthesis latency on a running llm-tts-api instance.
 
 Usage:
     # Start the service in another terminal:
     #   uv run uvicorn llm_tts_api.main:app --host 127.0.0.1 --port 8010
-    # Then run this script:
+    # Then run this script against either endpoint:
     uv run python scripts/perf_baseline.py \\
         --url http://127.0.0.1:8010 \\
+        --endpoint openai \\
         --voice alloy \\
         --model Qwen/Qwen3-TTS-12Hz-0.6B-Base \\
         --runs 11 \\
         --warmup 1 \\
         --input tests/perf/fixtures/baseline_input.txt
+
+    # Drive the rich endpoint instead (S-021 T1):
+    uv run python scripts/perf_baseline.py --endpoint rich ...
 
 The ``--model`` value MUST be present in the server's allow-list
 (``TTS_MLX_AUDIO_MODEL_ALLOWED`` etc.) or the request will be rejected with
@@ -20,7 +24,8 @@ The ``--model`` value MUST be present in the server's allow-list
 Produces a Markdown table on stdout that can be pasted into docs/perf/baseline.md.
 
 S-002 / NFR-PF-01. Anchored to current pre-refactor code; S-021 re-runs against the
-refactored path and asserts <= +10% regression on p50 and p95.
+refactored path (both rich and OpenAI-adapter endpoints) and asserts <= +10%
+regression on p50 and p95.
 """
 
 from __future__ import annotations
@@ -49,12 +54,20 @@ def _git_sha(repo_root: Path) -> str:
         return "unknown"
 
 
-def _one_request(url: str, model: str, voice: str, text: str, timeout: float) -> float:
+_ENDPOINT_PATHS: dict[str, str] = {
+    "openai": "/v1/audio/speech",
+    "rich": "/v1/tts/synthesize",
+}
+
+
+def _one_request(
+    url: str, model: str, voice: str, text: str, timeout: float, endpoint: str
+) -> float:
     body = json.dumps(
         {"model": model, "input": text, "voice": voice, "response_format": "wav"}
     ).encode("utf-8")
     req = request.Request(
-        url=f"{url.rstrip('/')}/v1/audio/speech",
+        url=f"{url.rstrip('/')}{_ENDPOINT_PATHS[endpoint]}",
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -95,6 +108,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to reference input text",
     )
     p.add_argument("--timeout", type=float, default=600.0, help="Per-request timeout seconds")
+    p.add_argument(
+        "--endpoint",
+        choices=sorted(_ENDPOINT_PATHS.keys()),
+        default="openai",
+        help=(
+            "Which surface to drive: 'openai' = POST /v1/audio/speech "
+            "(S-002 anchor + S-021 T2); 'rich' = POST /v1/tts/synthesize (S-021 T1). "
+            "Both share the synthesize_core pipeline (S-017) so numbers should match "
+            "within measurement noise."
+        ),
+    )
     args = p.parse_args(argv)
 
     text = _read_input(args.input)
@@ -102,13 +126,19 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = Path(__file__).resolve().parents[1]
     sha = _git_sha(repo_root)
 
-    print(f"# perf-baseline run  sha={sha}  chars={char_count}  runs={args.runs}", file=sys.stderr)
+    print(
+        f"# perf-baseline run  sha={sha}  endpoint={args.endpoint}  "
+        f"chars={char_count}  runs={args.runs}",
+        file=sys.stderr,
+    )
     print(f"# host={platform.platform()}  python={platform.python_version()}", file=sys.stderr)
 
     # Warmup: model load + cache prime
     for i in range(args.warmup):
         try:
-            elapsed = _one_request(args.url, args.model, args.voice, text, args.timeout)
+            elapsed = _one_request(
+                args.url, args.model, args.voice, text, args.timeout, args.endpoint
+            )
             print(f"  warmup {i + 1}/{args.warmup}: {elapsed:.3f}s", file=sys.stderr)
         except error.URLError as exc:
             print(f"warmup request failed: {exc}", file=sys.stderr)
@@ -117,7 +147,9 @@ def main(argv: list[str] | None = None) -> int:
     samples: list[float] = []
     for i in range(args.runs):
         try:
-            elapsed = _one_request(args.url, args.model, args.voice, text, args.timeout)
+            elapsed = _one_request(
+                args.url, args.model, args.voice, text, args.timeout, args.endpoint
+            )
         except error.URLError as exc:
             print(f"run {i + 1} failed: {exc}", file=sys.stderr)
             return 1
@@ -132,9 +164,9 @@ def main(argv: list[str] | None = None) -> int:
     # Markdown row ready to paste into docs/perf/baseline.md
     print()
     print(
-        f"| {sha[:12]} | {platform.platform()} | alloy | {char_count} chars | "
-        f"{args.runs} | {p50 * 1000:.0f} ms | {p95 * 1000:.0f} ms | "
-        f"{p_min * 1000:.0f} ms | {p_max * 1000:.0f} ms |"
+        f"| {sha[:12]} | {args.endpoint} | {platform.platform()} | alloy | "
+        f"{char_count} chars | {args.runs} | {p50 * 1000:.0f} ms | "
+        f"{p95 * 1000:.0f} ms | {p_min * 1000:.0f} ms | {p_max * 1000:.0f} ms |"
     )
     return 0
 
