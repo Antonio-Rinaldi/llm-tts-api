@@ -7,7 +7,7 @@ Tracks sprints planned and their disposition.
 | 1 | Foundation — observability, lifespan, hardware-aware bootstrap | S-001, S-002, S-003, S-004, S-005 | DONE | 2026-05-17 | 2026-05-17 | 2026-05-17 |
 | 2 | Core services — async concurrency, model cache, error taxonomy, lifecycle | S-006, S-007, S-008, S-009, S-010, S-012 | DONE | 2026-05-17 | 2026-05-17 | 2026-05-18 |
 | 3 | Voice store — repositories, optional backends, CRUD, seed ingestion | S-022, S-023, S-024, S-025, S-011 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
-| 4 | Rich endpoint surface — synthesize + streaming + cancellation | S-013, S-015, S-016 | PLANNED | 2026-05-18 | — | — |
+| 4 | Rich endpoint surface — synthesize + streaming + cancellation | S-013, S-015, S-016 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
 
 ## Sprint 4 — summary
 

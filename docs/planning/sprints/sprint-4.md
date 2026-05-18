@@ -1,6 +1,6 @@
 # Sprint 4 — Rich endpoint surface: synthesize + streaming + cancellation
 
-**Status:** PLANNED
+**Status:** DONE
 **Planned:** 2026-05-18
 **Stories:** S-013 (Step 1) → S-015 + S-016 (Step 2 parallel)
 **Cycle:** llm-tts-api improvement cycle, Sprint 4 of N
@@ -63,7 +63,7 @@ Sprint 4 proves itself when:
 ### S-013 — Rich endpoint `POST /v1/tts/synthesize`
 
 **Type:** User
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-006, S-007, S-008, S-009, S-011, S-012, S-025 (all DONE)
 **Refs:** FR-EP-01..04, NFR-MT-04, BR-1..4, BR-9, SRS §5 header inventory
 **Why selected:** Foundation for all of Step 2 + Sprint 5 (OpenAI adapter, byte-identity).
@@ -96,7 +96,7 @@ Sprint 4 proves itself when:
 ### S-015 — Streaming response with headers/trailers
 
 **Type:** User
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-013 (Step 1)
 **Refs:** FR-EP-05, SRS §5 Resolution G-3 (trailer fallback)
 **Why selected:** Streaming path completes the rich-endpoint contract and is required for the OpenAI SDK streaming compatibility S-017 will rely on.
@@ -121,7 +121,7 @@ Sprint 4 proves itself when:
 ### S-016 — Client-disconnect cancellation
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-013 (Step 1), S-007 (DONE)
 **Refs:** FR-CC-05
 **Why selected:** Closes the concurrency contract — semaphores must release on client disconnect to prevent queue starvation under unreliable clients.
