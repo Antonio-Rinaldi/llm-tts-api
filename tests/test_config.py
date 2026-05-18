@@ -150,3 +150,81 @@ def test_settings_vllm_omni_provider_specific_model_env(
     assert settings.tts_provider == "vllm-omni"
     assert settings.tts_model_default == "vllm-omni/default-tts"
     assert settings.tts_model_allowed == ["vllm-omni/default-tts", "vllm-omni/voice-clone-tts"]
+
+
+# --- S-008: TTS_MODEL_CACHE_SIZE + TTS_PRELOAD_MODELS -----------------------
+
+
+def test_settings_model_cache_size_defaults_to_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from llm_tts_api.config import Settings
+
+    monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
+
+    settings = Settings()
+    assert settings.tts_model_cache_size == 1
+    assert settings.tts_preload_models == []
+
+
+def test_settings_model_cache_size_from_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from llm_tts_api.config import Settings
+
+    monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
+    monkeypatch.setenv("TTS_MODEL_CACHE_SIZE", "4")
+
+    settings = Settings()
+    assert settings.tts_model_cache_size == 4
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "abc", ""])
+def test_settings_model_cache_size_rejects_invalid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad: str
+) -> None:
+    from llm_tts_api.config import Settings
+
+    monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
+    monkeypatch.setenv("TTS_MODEL_CACHE_SIZE", bad)
+
+    with pytest.raises(ValueError, match="TTS_MODEL_CACHE_SIZE"):
+        Settings()
+
+
+def test_settings_preload_models_parsed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from llm_tts_api.config import Settings
+
+    monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
+    monkeypatch.setenv(
+        "TTS_PRELOAD_MODELS",
+        "mlx_audio:Qwen/Qwen3-TTS-12Hz-0.6B-Base,"
+        " voxtral:mlx-community/Voxtral-4B-TTS-2603-mlx-4bit",
+    )
+
+    settings = Settings()
+    assert settings.tts_preload_models == [
+        ("mlx_audio", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"),
+        ("voxtral", "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "mlx_audio",  # no colon
+        ":model",  # empty provider
+        "mlx_audio:",  # empty model
+        "unknown-provider:m1",  # unknown provider name
+    ],
+)
+def test_settings_preload_models_rejects_invalid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, value: str
+) -> None:
+    from llm_tts_api.config import Settings
+
+    monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(_write_voice_map(tmp_path)))
+    monkeypatch.setenv("TTS_PRELOAD_MODELS", value)
+
+    with pytest.raises(ValueError, match="TTS_PRELOAD_MODELS"):
+        Settings()

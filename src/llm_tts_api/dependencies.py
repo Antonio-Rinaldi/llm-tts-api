@@ -19,8 +19,10 @@ from fastapi import Request
 
 from llm_tts_api.config import Settings
 from llm_tts_api.engine import DeviceProfile, resolve_device_profile
+from llm_tts_api.services.model_cache import LRUModelCache
 from llm_tts_api.services.model_registry import ModelRegistry
 from llm_tts_api.services.stt_service import STTService
+from llm_tts_api.services.tts_providers.cached_model_provider import CachedModelProvider
 from llm_tts_api.services.tts_providers.mlx_audio_provider import MLXAudioTTSProvider
 from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
 from llm_tts_api.services.tts_providers.vllm_omni_provider import VllmOmniTTSProvider
@@ -42,6 +44,7 @@ class AppDependencies:
     device_profile: DeviceProfile
     model_registry: ModelRegistry
     provider_registry: TTSProviderRegistry
+    model_cache: LRUModelCache
     tts_service: TTSService
     stt_service: STTService
 
@@ -56,13 +59,23 @@ def build_default_dependencies() -> AppDependencies:
     settings = Settings()
     device_profile = resolve_device_profile()
     model_registry = ModelRegistry(settings)
-    provider_registry = TTSProviderRegistry(
-        providers=[
-            MLXAudioTTSProvider(),
-            VoxtralTTSProvider(),
-            VllmOmniTTSProvider(),
-        ]
-    )
+    mlx_audio = MLXAudioTTSProvider()
+    voxtral = VoxtralTTSProvider()
+    vllm_omni = VllmOmniTTSProvider()
+    providers: list[CachedModelProvider] = [mlx_audio, voxtral, vllm_omni]
+    provider_registry = TTSProviderRegistry(providers=[mlx_audio, voxtral, vllm_omni])
+
+    # S-008: build the shared LRU cache, hand it to each provider with the
+    # provider-specific allow-list, then preload the configured pairs so
+    # the first synthesis incurs no load latency (FR-CA-04 / UAT-CA-03).
+    model_cache = LRUModelCache(max_size=settings.tts_model_cache_size)
+    for provider in providers:
+        provider.attach_model_cache(
+            model_cache,
+            allowed_models=settings.tts_model_allowed_for_provider(provider.provider_name),
+        )
+    _preload_models(provider_registry, settings.tts_preload_models)
+
     tts_service = TTSService(
         settings=settings,
         model_registry=model_registry,
@@ -74,9 +87,21 @@ def build_default_dependencies() -> AppDependencies:
         device_profile=device_profile,
         model_registry=model_registry,
         provider_registry=provider_registry,
+        model_cache=model_cache,
         tts_service=tts_service,
         stt_service=stt_service,
     )
+
+
+def _preload_models(
+    provider_registry: TTSProviderRegistry, preload_pairs: list[tuple[str, str]]
+) -> None:
+    """Warm the cache for every ``provider:model`` pair from ``TTS_PRELOAD_MODELS``."""
+    for provider_name, model_id in preload_pairs:
+        provider = provider_registry.get(provider_name)
+        preload_fn = getattr(provider, "preload", None)
+        if callable(preload_fn):
+            preload_fn(model_id)
 
 
 # --- Request-aware Depends-shape getters ------------------------------------
@@ -114,3 +139,8 @@ def get_stt_service(request: Request) -> STTService:
 def get_device_profile(request: Request) -> DeviceProfile:
     """Return the process-wide :class:`DeviceProfile` (S-005)."""
     return cast(DeviceProfile, request.app.state.device_profile)
+
+
+def get_model_cache(request: Request) -> LRUModelCache:
+    """Return the process-wide :class:`LRUModelCache` (S-008)."""
+    return cast(LRUModelCache, request.app.state.model_cache)

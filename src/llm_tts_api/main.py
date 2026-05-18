@@ -75,6 +75,7 @@ def create_app() -> FastAPI:
             app.state.device_profile = deps.device_profile
             app.state.model_registry = deps.model_registry
             app.state.provider_registry = deps.provider_registry
+            app.state.model_cache = deps.model_cache
             app.state.tts_service = deps.tts_service
             app.state.stt_service = deps.stt_service
         yield

@@ -60,12 +60,20 @@ class Settings:
     tts_max_input_chars: int = 4096
     tts_max_concurrent_requests: int = 1
 
+    # S-008: bounded LRU model cache + optional startup preload list.
+    # ``tts_preload_models`` is parsed from ``TTS_PRELOAD_MODELS`` as
+    # ``provider:model,provider:model`` and validated against the known
+    # provider set so an unparseable value fails startup loudly (FR-CA-04).
+    tts_model_cache_size: int = 1
+    tts_preload_models: list[tuple[str, str]] = field(default_factory=list)
+
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
         self._load_app_identity()
         self._load_provider_models()
         self._load_stt_models()
         self._load_tts_limits()
+        self._load_model_cache_settings()
         self.tts_voice_map = self._load_voice_map_from_file()
 
     @staticmethod
@@ -154,6 +162,47 @@ class Settings:
             self.tts_max_concurrent_requests = max(1, int(max_req_raw))
         except ValueError as exc:
             raise ValueError("TTS_MAX_CONCURRENT_REQUESTS must be an integer >= 1") from exc
+
+    def _load_model_cache_settings(self) -> None:
+        """Validate ``TTS_MODEL_CACHE_SIZE`` and parse ``TTS_PRELOAD_MODELS``."""
+        size_raw = os.getenv("TTS_MODEL_CACHE_SIZE", str(self.tts_model_cache_size)).strip()
+        try:
+            size = int(size_raw)
+        except ValueError as exc:
+            raise ValueError("TTS_MODEL_CACHE_SIZE must be an integer >= 1") from exc
+        if size < 1:
+            raise ValueError("TTS_MODEL_CACHE_SIZE must be an integer >= 1")
+        self.tts_model_cache_size = size
+
+        preload_raw = os.getenv("TTS_PRELOAD_MODELS", "").strip()
+        if not preload_raw:
+            self.tts_preload_models = []
+            return
+
+        known_providers = {"mlx_audio", "voxtral", "vllm-omni"}
+        parsed: list[tuple[str, str]] = []
+        for raw_pair in preload_raw.split(","):
+            entry = raw_pair.strip()
+            if not entry:
+                continue
+            if ":" not in entry:
+                raise ValueError(
+                    f"TTS_PRELOAD_MODELS entries must be 'provider:model_id' (got {entry!r})"
+                )
+            provider, _, model_id = entry.partition(":")
+            provider = provider.strip().lower()
+            model_id = model_id.strip()
+            if not provider or not model_id:
+                raise ValueError(
+                    f"TTS_PRELOAD_MODELS entries must be 'provider:model_id' (got {entry!r})"
+                )
+            if provider not in known_providers:
+                raise ValueError(
+                    f"TTS_PRELOAD_MODELS references unknown provider {provider!r}; "
+                    f"expected one of {sorted(known_providers)}"
+                )
+            parsed.append((provider, model_id))
+        self.tts_preload_models = parsed
 
     def _load_voice_map_from_file(self) -> dict[str, VoiceConfig]:
         """Load and validate all configured voices from ``TTS_VOICE_MAP_FILE``."""
