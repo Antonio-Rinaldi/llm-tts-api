@@ -92,6 +92,9 @@ class Settings:
     # ``FsBlobRepository`` (``blobs/<id>.wav``) live underneath it.
     tts_voice_store_dir: Path = field(default_factory=lambda: Path("var/voices"))
 
+    # S-025 — per-upload hard cap for voice-CRUD audio (NFR-SE-01). Default 10 MiB.
+    tts_refaudio_max_bytes: int = 10 * 1024 * 1024
+
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
         self._load_app_identity()
@@ -100,6 +103,9 @@ class Settings:
         self._load_tts_limits()
         self._load_runtime_knobs()
         self._load_voice_store_dir()
+        self.tts_refaudio_max_bytes = self._load_int(
+            "TTS_REFAUDIO_MAX_BYTES", self.tts_refaudio_max_bytes, minimum=1
+        )
         self.tts_voice_map = self._load_voice_map_from_file()
 
     def _load_voice_store_dir(self) -> None:

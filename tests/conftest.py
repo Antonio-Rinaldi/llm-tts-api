@@ -67,6 +67,7 @@ def clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TTS_SHUTDOWN_DRAIN_SECONDS",
         "TTS_MIN_FREE_MEMORY_GB",
         "TTS_VOICE_STORE_DIR",
+        "TTS_REFAUDIO_MAX_BYTES",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
@@ -124,6 +125,7 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     settings.tts_min_free_memory_gb = 0
     settings.app_log_format = "text"
     settings.tts_voice_store_dir = Path("var/voices")
+    settings.tts_refaudio_max_bytes = 10 * 1024 * 1024
 
     app_state.settings = settings  # type: ignore[attr-defined]
     app_state.device_profile = DeviceProfile(  # type: ignore[attr-defined]
