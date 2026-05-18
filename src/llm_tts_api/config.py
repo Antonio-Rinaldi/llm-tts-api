@@ -414,8 +414,16 @@ class Settings:
         return None
 
     def _load_voice_map_from_file(self) -> dict[str, VoiceConfig]:
-        """Load and validate all configured voices from ``TTS_VOICE_MAP_FILE``."""
+        """Load and validate all configured voices from ``TTS_VOICE_MAP_FILE``.
+
+        FR-VM-05: when the env var is unset or the file is absent the
+        service MUST start cleanly with an empty legacy map; the
+        voice-store seed ingestor (S-011) layers the runtime upsert on
+        top of this slot.
+        """
         voice_map_path = self._resolve_voice_map_path()
+        if voice_map_path is None:
+            return {}
         try:
             raw_voice_map = json.loads(voice_map_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
@@ -429,15 +437,22 @@ class Settings:
         }
 
     @staticmethod
-    def _resolve_voice_map_path() -> Path:
-        """Resolve and validate path to the JSON voice map file."""
+    def _resolve_voice_map_path() -> Path | None:
+        """Return the configured voice-map path, or ``None`` when absent.
+
+        FR-VM-05: unset env var or missing file is a valid configuration
+        (S-011 seed ingestor falls back to an empty pass). A non-empty
+        env var pointing at a non-file is still treated as misconfig.
+        """
         voice_map_file = os.getenv("TTS_VOICE_MAP_FILE", "").strip()
         if not voice_map_file:
-            raise ValueError("TTS_VOICE_MAP_FILE env must be defined")
+            return None
 
         voice_map_path = Path(voice_map_file)
-        if not voice_map_path.exists() or not voice_map_path.is_file():
-            raise ValueError("TTS_VOICE_MAP_FILE must point to an existing JSON file")
+        if not voice_map_path.exists():
+            return None
+        if not voice_map_path.is_file():
+            raise ValueError("TTS_VOICE_MAP_FILE must point to a regular file")
         return voice_map_path
 
     @staticmethod

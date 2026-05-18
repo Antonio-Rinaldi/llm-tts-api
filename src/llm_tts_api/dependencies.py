@@ -38,6 +38,9 @@ from llm_tts_api.services.voice_store import (
     FsJsonMetadataRepository,
     VoiceBlobRepository,
     VoiceMetadataRepository,
+    VoiceSeedIngestor,
+    force_polling_from_env,
+    resolve_seed_file_path,
 )
 
 
@@ -63,6 +66,7 @@ class AppDependencies:
     queue_semaphore: asyncio.Semaphore
     voice_metadata_repo: VoiceMetadataRepository
     voice_blob_repo: VoiceBlobRepository
+    voice_seed_ingestor: VoiceSeedIngestor
     model_locks: ModelLockMap = field(default_factory=dict)
 
 
@@ -168,6 +172,15 @@ def build_default_dependencies() -> AppDependencies:
     # if the module is absent (NFR-ST-02).
     voice_metadata_repo = build_voice_metadata_repo(settings)
     voice_blob_repo: VoiceBlobRepository = _build_voice_blob_repo(settings)
+    # S-011 — voice_map.json seed ingestion. Path resolution is tolerant
+    # (FR-VM-05): unset or missing file → ingestor is constructed with
+    # ``seed_file_path=None`` and becomes a no-op.
+    voice_seed_ingestor = VoiceSeedIngestor(
+        metadata_repo=voice_metadata_repo,
+        blob_repo=voice_blob_repo,
+        seed_file_path=resolve_seed_file_path(),
+        force_polling=force_polling_from_env(),
+    )
     return AppDependencies(
         settings=settings,
         device_profile=device_profile,
@@ -181,6 +194,7 @@ def build_default_dependencies() -> AppDependencies:
         queue_semaphore=queue_semaphore,
         voice_metadata_repo=voice_metadata_repo,
         voice_blob_repo=voice_blob_repo,
+        voice_seed_ingestor=voice_seed_ingestor,
         model_locks=model_locks,
     )
 

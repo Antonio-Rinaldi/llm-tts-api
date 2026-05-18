@@ -26,6 +26,11 @@ from llm_tts_api.services.voice_store.records import (
     VoiceRecord,
     validate_voice_id,
 )
+from llm_tts_api.services.voice_store.seed_ingestion import (
+    VoiceSeedIngestor,
+    force_polling_from_env,
+    resolve_seed_file_path,
+)
 
 __all__ = [
     "VOICE_ID_PATTERN",
@@ -38,6 +43,9 @@ __all__ = [
     "VoiceMetadataRepository",
     "VoiceNotFoundError",
     "VoiceRecord",
+    "VoiceSeedIngestor",
     "VoiceStoreError",
+    "force_polling_from_env",
+    "resolve_seed_file_path",
     "validate_voice_id",
 ]

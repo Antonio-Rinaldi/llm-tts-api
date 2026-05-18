@@ -18,6 +18,10 @@ dependencies = [
   "psutil>=5.9.0",
   # S-025: voice-CRUD endpoints accept multipart/form-data uploads.
   "python-multipart>=0.0.9",
+  # S-011: voice_map.json seed ingestion watches the file for hot-reload
+  # (FR-VM-02 / NFR-OP-05). watchfiles supports a polling fallback for
+  # Docker bind-mounts (RISK-3).
+  "watchfiles>=0.21",
 ]
 
 [project.optional-dependencies]
