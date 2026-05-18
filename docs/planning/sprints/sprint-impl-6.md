@@ -514,3 +514,572 @@ Per the sprint plan's explicit risk row ("if total LOC saving < 3%, the inventor
 - `raise_not_implemented(endpoint)`: calls `not_implemented(f"Endpoint '{endpoint}' is not implemented yet")` — character-identical message to the three former local copies.
 
 ---
+
+---
+
+# Story Reviews
+
+# S-019 — Story-level review (Phase 1S, cross-task coherence)
+
+**Date:** 2026-05-19
+**Reviewer:** code-reviewer (story-level)
+**Scope:** Cross-task coherence of S-019 deliverables (T1 README, T2 class
+diagrams, T3 sequence diagrams, T4 OpenAPI, T5 inventory test).
+**Baseline:** 380 passed + 2 skipped + 1 xfailed, mypy --strict clean
+across 52 source files — confirmed in worktree.
+
+## Verdict
+
+**Clean** — no internal cross-task coherence issues within S-019.
+One minor downstream drift caused by S-026 was found and fixed in
+this worktree (see below).
+
+## Cross-task coherence checks performed
+
+| Pair | Mechanism | Result |
+|---|---|---|
+| T1 README ↔ T5 test (env vars) | AST walker over `Settings`, asserts every literal env-var name in `config.py` is in `README.md`. Sanity asserts on `APP_LOG_LEVEL` and `TTS_VOICE_STORE_DIR` guard against silent walker drift. | Pass — 32 names discovered, all present. |
+| T1 README ↔ T5 test (errors) | Imports `ERROR_CODES` from `errors.py` and asserts every `(type, code)` pair is in `README.md`. | Pass — all 5 types × all codes present. |
+| T4 OpenAPI ↔ T5 test (routes) | Builds the app under `LLM_TTS_API_TEST_NO_LIFESPAN=1`, walks `app.routes`, requires each path to be in `paths:` or share a prefix family. | Pass — actual routes set and documented set match exactly (23 paths each). |
+| T1 README ↔ T4 OpenAPI (endpoints) | Manual cross-check: `/v1/tts/synthesize`, `/v1/tts/voices/*` (5 sub-routes), `/v1/audio/speech`, `/v1/models`, `/health`, `/ready`. | Pass — all surfaces documented in both. |
+| T1/T4 ↔ code (error envelope) | OpenAPI `ErrorDetail.type` enum (`validation_error`, `voice_error`, `provider_error`, `capacity_error`, `internal_error`) matches `ERROR_CODES.keys()` 1:1. | Pass. |
+| T2/T3 diagrams ↔ code symbols | Grep-checked: `synthesize_core`, `_translate_openai_request`, `_RICH_ONLY_HEADERS`, `select_provider`, `build_default_dependencies`, `_drain_concurrency`, `_TrailerStreamingResponse`, `ingest_once`, `watch_and_ingest` — every symbol cited by a diagram exists in `src/`. | Pass. |
+| T2/T3 diagrams ↔ T1 README (concepts) | Same env-var/handler/voice-store/lifespan concepts across all four surfaces; no contradictions. | Pass. |
+
+## Coherence fix applied in this worktree
+
+**Issue.** `docs/diagrams/sequence/create-speech.md:9` cited
+`_RICH_ONLY_HEADERS — routers/audio.py:51-62`. The citation was
+correct at S-019's merge commit (f29c7f8), but S-026's cleanup
+commit (4b01af0) added a two-line comment block to `audio.py` and
+shifted the frozenset literal to L53-64. This is post-S-019 drift
+caused by a downstream story, not an internal S-019 issue, but it
+falsifies a doc line-reference and undermines S-026's "no doc
+drift" gate.
+
+**Fix.** Dropped the explicit `:51-62` line range. The symbol name
+is uniquely greppable; line ranges on doc citations are brittle by
+construction and were the only such citation in the diagram set
+(no other diagram uses `file:line` form). Committed as
+`docs(diagrams): drop brittle line-range from create-speech.md`.
+
+**Gates after fix.** 380 passed + 2 skipped + 1 xfailed, mypy
+--strict clean — unchanged from the baseline.
+
+## Sprint-6 invariants for S-019 (status)
+
+| Invariant | Status |
+|---|---|
+| Behavior-preserving (S-026 quiescent) | N/A for S-019 (docs only — no source touched). |
+| No doc drift (S-019) | **Honored** after the line-range fix above. |
+| No startup regression (S-020) | N/A — no `main.py` / lifespan changes. |
+| No perf regression (S-021) | N/A — no hot-path changes. |
+
+## Human review checklist
+
+The mechanical coherence is verified by the T5 inventory test and
+the OpenAPI route test. What still needs a human eye:
+
+- [ ] **README rendering** — open `README.md` on GitHub (or a
+      Markdown preview) and visually confirm the new sections
+      (Hardware Auto-Detection capability matrix, env-var
+      inventory groups, Storage-backend matrix, Error taxonomy
+      table, Voice biometric notice blockquote, Sizing
+      recommendations) render cleanly. Tables and the blockquote
+      are the highest-risk markdown blocks.
+- [ ] **Biometric-notice wording** — the NFR-CP-01 + NFR-PV-04
+      paragraphs are quoted verbatim in a single blockquote.
+      Compare against the SRS source and confirm no editorial
+      paraphrase slipped in.
+- [ ] **Mermaid diagrams** — render each of the 11 diagram files
+      (4 class + 7 sequence) in a Mermaid live editor or
+      VSCode/Obsidian preview to confirm syntax. The unit suite
+      does not lint Mermaid bodies.
+- [ ] **OpenAPI consumability** — feed
+      `docs/openapi/openapi.yaml` into Swagger UI / Redoc / an
+      OpenAPI client generator and confirm no warnings beyond
+      "501-stubbed surface" expectations.
+- [ ] **Sizing recommendations** — the three host classes in the
+      README resolve SRS §5 C-1. Confirm the resolution is the
+      one Architecture wants (this is the only judgement call in
+      the docs refresh).
+
+## Test guidance (manual + suite)
+
+**Automated coverage already in place:**
+
+```
+uv run pytest tests/test_docs_inventory.py -v
+   # 3 passed — env vars, error taxonomy, router prefixes
+uv run pytest               # 380 passed + 2 skipped + 1 xfailed
+uv run mypy --strict src/   # clean across 52 files
+uv run ruff check .         # clean
+uv run ruff format --check .  # clean
+```
+
+**Suggested manual smokes:**
+
+- `python -c "import yaml; yaml.safe_load(open('docs/openapi/openapi.yaml'))"`
+  (syntax) — passes.
+- Optional: `pip install openapi-spec-validator &&
+  openapi-spec-validator docs/openapi/openapi.yaml` for
+  semantic validation. Not currently in the gate; could be
+  added in a follow-up if desired.
+- Render Mermaid diagrams locally before merge to catch any
+  syntax surprises that the unit suite cannot see.
+
+## Notes for sprint-level review
+
+- The T5 router-prefix check is intentionally lenient (a
+  prefix-family match satisfies it, to accommodate templated
+  paths like `/v1/tts/voices/{voice_id}`). Today the documented
+  set and the actual set match exactly, so the leniency is
+  unused — but a future router addition could pass T5 without
+  being explicitly documented if a sibling under the same
+  directory is documented. Acceptable for now (the test serves as
+  a coarse net rather than a tight contract).
+- Line-number citations were dropped in one place (above). The
+  remaining diagram citations are by symbol name only and won't
+  drift on internal line shifts.
+
+— end of S-019 story-level review —
+
+---
+
+# S-020 Story-Level Review (Phase 1S — cross-task coherence)
+
+**Story:** S-020 — Dockerfile (default + CUDA) + CI smoke jobs
+**Branch under review:** `sprint-6-S-020` (merged into `sprint-6`)
+**Reviewer:** Claude (story-level coherence pass)
+**Date:** 2026-05-19
+
+## Result
+
+**No cross-task coherence issues found** that require fixes inside this
+story. T1–T4 form a consistent surface and respect Sprint-6 invariants
+(no doc drift vs. S-019, no startup regression, no perf hot-path
+touched, behavior-preserving for S-026 downstream). All four sub-tasks
+read as one coherent change.
+
+No commits made by this review.
+
+## What was checked (cross-task)
+
+1. **T1 (`Dockerfile`) ↔ T2 (`Dockerfile.cuda`) contract parity.**
+   Same env-var defaults (`TTS_VOICE_MAP_FILE`, `TTS_VOICE_STORE_DIR`,
+   `TTS_SHUTDOWN_DRAIN_SECONDS=30`, `APP_LOG_FORMAT=json`), same volume
+   set (`/var/lib/llm-tts-api/voices`, `/app/config`), same non-root
+   `app:app` (1000:1000), same `EXPOSE 8010`, same
+   `tini -- uvicorn … --no-use-colors` entrypoint, same `/health`
+   healthcheck (just a wider `--start-period=120s` on CUDA — correctly
+   justified by cold CUDA-lib import). CUDA variant additionally sets
+   `TTS_DEVICE=cuda` and the NVIDIA visibility envs. Symmetry is clean.
+
+2. **T1/T2 ↔ T3 (`docker.yml`).** The matrix passes the matching
+   `dockerfile:` to `docker/build-push-action`, tags `:ci` / `:ci-cuda`,
+   and the smoke step overrides `TTS_SHUTDOWN_DRAIN_SECONDS=10` (so the
+   image's default of 30 doesn't waste runner budget) and overrides the
+   CUDA image to `TTS_DEVICE=cpu` so the GPU-less GitHub runner can
+   still exercise the same `/health` + drain contract. The `stop_budget
+   = DRAIN_SECONDS + 5` slack is consistent with the drain-then-SIGKILL
+   contract from S-010. Exit-code assertion = 0 matches the
+   `_drain_concurrency` path in `src/llm_tts_api/main.py:78`.
+
+3. **T1/T2 ↔ T4 (`.dockerignore`).** Excludes do NOT clip anything the
+   Dockerfiles `COPY` (they take `pyproject.toml`, `README.md`, `src`,
+   `config`). The ignore list strips planning docs, tests, var/, caches,
+   local env files — appropriate. There is some cosmetic redundancy
+   (`docs/`, `docs/planning/`, `docs/planning/sprints/.pending/` are
+   nested — the first line subsumes the others), but it has no
+   functional effect.
+
+4. **Sprint-6 cross-story coherence.**
+   - **S-019 (docs):** `docs/README.md:64` already names `Dockerfile.cuda`
+     and the `no_viable_provider` startup path — consistent with T2.
+     `docs/specs/writer-nfr.md` NFR-OP-02 requirements (uvicorn on
+     documented port, SIGTERM drain, `/health` + `/ready` probes, env
+     vars, volumes for voice map + ref audio) are all met by both
+     images. No doc drift introduced.
+   - **S-021 (perf):** `docs/perf/baseline.md` documents port 8010 for
+     the local uvicorn under test; the container `EXPOSE`s the same
+     port, so the perf baseline and the container path agree on the
+     ABI. No hot-path code touched.
+   - **S-026 (dedup) precondition:** S-020 only adds infra files
+     (`Dockerfile`, `Dockerfile.cuda`, `.dockerignore`,
+     `.github/workflows/docker.yml`); no `src/` changes, so behavior is
+     trivially preserved.
+   - **Sprint-6 invariant — no startup regression:** the ENTRYPOINT
+     keeps `tini` as PID 1 forwarding SIGTERM, and the lifespan-managed
+     `_drain_concurrency` (S-010) is reached unchanged. No new env vars
+     introduced; defaults match the existing inventory.
+
+5. **Acceptance criteria from `docs/planning/sprints/sprint-6.md` §S-020.**
+   Each of the five bullets is met by the artifacts as merged
+   (build succeeds in CI; `/health` 60 s smoke; non-root runtime with
+   no compiler toolchain; voice map + voice store mountable; SIGTERM
+   exits 0 within `TTS_SHUTDOWN_DRAIN_SECONDS`).
+
+## Minor observations (NOT blocking, NOT fixed)
+
+These are worth flagging to the human reviewer but did not warrant
+in-this-worktree changes — they are pre-existing or cosmetic, and
+fixing them now would expand the story scope.
+
+- **Smoke test creates an unused file.**
+  `.github/workflows/docker.yml:74` does `cp config/voice_map.container.json
+  "$smoke_dir/voice_map.json"`, but the file is never mounted into the
+  container (only the `voices/` dir is). The in-image baked
+  `voice_map.container.json` is what the container uses, which is the
+  correct contract for the smoke — the `cp` is dead. Removing the two
+  lines (the `cp` and the `smoke_dir` setup for the map) would clarify
+  intent, but the smoke is correct as-is.
+
+- **`config/voice_map.container.json` references `/app/voices/…` paths,
+  while the new Dockerfile mounts the voice store at
+  `/var/lib/llm-tts-api/voices` and sets
+  `TTS_VOICE_STORE_DIR=/var/lib/llm-tts-api/voices`.** This is
+  pre-existing (S-020 did not touch the config file) and does NOT
+  affect the smoke (which only hits `/health`). It WILL affect
+  operators who try a real synthesis against a fresh container — the
+  hardcoded `/app/voices/…` paths inside the voice map won't resolve
+  unless either the voice files are placed at `/app/voices/` or the
+  voice map is overridden via mount. Worth a follow-up story to either
+  pivot the container voice map to `/var/lib/llm-tts-api/voices/…` or
+  document the override clearly; out of scope for S-020.
+
+- **CUDA wheel index uses `cu121` while base is CUDA 12.9.1.** Forward
+  compatibility within CUDA 12.x major works in practice (the cu121
+  torch wheel runs on cu12.9 runtime), but the version skew is not
+  called out in `Dockerfile.cuda`. A one-line comment explaining the
+  pin would help future maintainers — non-blocking.
+
+- **`.dockerignore` redundancy.** `docs/`, `docs/planning/`, and
+  `docs/planning/sprints/.pending/` are nested; the first entry already
+  covers the deeper paths. Purely cosmetic.
+
+## Human-review checklist
+
+Quick gates the human reviewer should confirm before MERGED:
+
+- [ ] First CI run on the `Docker` workflow is **green** for both
+      `build-default` and `build-cuda` matrix legs. (CI is the gate per
+      sprint plan; this is the load-bearing verification.)
+- [ ] Image-size record step prints a number that looks sane (e.g.
+      default image well under ~1.5 GB; CUDA image larger but stable
+      across runs). Capture it in the PR description as the impl notes
+      promise.
+- [ ] `docker logs llm-tts-api-smoke` from a successful run shows the
+      lifespan startup messages followed by a clean shutdown sequence
+      (`_drain_concurrency` log line after SIGTERM, no traceback).
+- [ ] No unrelated workflow changes in `.github/workflows/ci.yml` —
+      S-020 should only ADD `docker.yml`. (Impl notes claim this; verify
+      diff is `.github/workflows/docker.yml` only.)
+- [ ] Confirm the `concurrency` group key matches house style for the
+      other workflows (skim `.github/workflows/ci.yml`).
+- [ ] Sanity-check the digest pins resolve (or are still resolvable) on
+      Docker Hub / nvcr.io at merge time — pinned digests can be deleted
+      upstream.
+
+## Suggested operator test guidance (post-merge)
+
+Beyond CI, these are the spot-checks worth running once on a real host
+before declaring DONE:
+
+1. **Local default image build + run (CPU/MPS host).**
+   ```
+   docker build -t llm-tts-api:local .
+   docker run --rm -p 8010:8010 \
+       -v $(pwd)/voices:/var/lib/llm-tts-api/voices \
+       llm-tts-api:local
+   curl -fsS http://127.0.0.1:8010/health
+   curl -fsS http://127.0.0.1:8010/ready    # exercise the readiness branch
+   ```
+   Then `docker stop` and confirm exit 0 within ~30 s.
+
+2. **CUDA image on a real GPU host (operator-driven, off-CI).**
+   ```
+   docker build -f Dockerfile.cuda -t llm-tts-api:local-cuda .
+   docker run --rm --gpus all -p 8010:8010 \
+       -v $(pwd)/voices:/var/lib/llm-tts-api/voices \
+       llm-tts-api:local-cuda
+   ```
+   Confirm the startup log shows `detect_device()` selecting CUDA and
+   the chosen provider (S-005/S-006). On a host without a CUDA-capable
+   provider available, confirm startup exits with
+   `provider_error.no_viable_provider` per UAT-QG-05 / NFR-OP-01.
+
+3. **Drain assertion against a real in-flight request.** With the
+   default container running, send a long-ish `/v1/tts/synthesize`
+   request, `docker stop` mid-flight, and confirm: the in-flight
+   request finishes (or returns within the drain window) and the
+   container exits 0. This is the same contract UAT covers, but in
+   the containerised path.
+
+4. **Voice-map mount.** Override `TTS_VOICE_MAP_FILE` to point at a
+   bind-mounted file and confirm the container picks it up at startup
+   (FR-VM-01) and reloads on edit (NFR-OP-05) — both should work since
+   `/app/config` is a declared `VOLUME`.
+
+## Status
+
+Recommend the human reviewer mark S-020 as MERGED once the first CI
+`Docker` workflow run is green and the image-size value has been
+recorded in the PR. No code changes required from this review.
+
+---
+
+# S-021 — Story-level review (Phase 1S, cross-task coherence)
+
+**Verdict:** ✅ **No cross-task coherence issues found.** Tasks T1–T5 are
+internally consistent and the three files touched (`scripts/perf_baseline.py`,
+`tests/test_perf_regression.py`, `docs/perf/baseline.md`) agree on
+methodology, terminology, and contract.
+
+**Scope of this review:** internal coherence across S-021's own T1–T5 only,
+per Phase 1S. No code changes were required.
+
+## Coherence checks (PASS)
+
+| Check | Evidence |
+|---|---|
+| T1 (rich) + T2 (openai) use the *same* script, single source of truth for methodology | `scripts/perf_baseline.py` `_ENDPOINT_PATHS` dict; `--endpoint {openai,rich}` flag wired through `_one_request` |
+| Default endpoint preserves S-002 anchor comparability | `--endpoint` default `openai` (script line 114) matches the Sprint-1 anchor explicitly noted in impl notes §T1+T2 |
+| `baseline.md` Measurements table columns match script output columns exactly | Script row: `sha \| endpoint \| host \| voice \| chars \| runs \| p50 \| p95 \| min \| max`; table header in baseline.md §§ "Sprint 1 anchor (S-002)" and "Sprint 6 post-cycle measurement (S-021 T5)" is identical |
+| T3 / T4 smoke bounds in code match what `baseline.md` "In-suite smoke" section advertises | Code: 200 ms p95 ceiling (line 252), `0.8×`/`2.5×` band (lines 291–294). Doc: "relaxed 200 ms ceiling" + "generous upper bound catches the 'concurrency cap collapsed to serial' regression class". |
+| Sprint-6 invariants respected | Behaviour-preserving (no src/ change). No doc drift (S-019 — only `docs/perf/baseline.md` modified, which is S-021's owned artifact). No startup regression (S-020 — no Dockerfile/main.py change). No perf regression (S-021 — adds smoke, doesn't tighten anything). |
+| Test suite still green at expected counts | Baseline declared by coordinator: 380 passed + 2 skipped + 1 xfailed; mypy --strict clean across 52 src files. S-021 added 2 tests to `test_perf_regression.py`. |
+| `_PacedFakeProvider` exercises the same admission path real providers go through | `synthesize_chunks` is sync (matches the protocol consumed by `synthesize_core` via `anyio.to_thread.run_sync`). Per-(provider, model) lock bypass uses distinct `model-{i}` names — documented in test docstring (line 265). |
+
+## Deviations from the sprint plan (documented; not coherence problems)
+
+These are noted for the human reviewer's awareness — they are
+methodologically defensible and the impl notes call them out, so they do
+not constitute story-internal incoherence.
+
+1. **Plan T1/T2 ask for `p50, p95, p99`; the script and baseline.md table
+   record `p50, p95, min, max`.** The S-002 anchor uses these same four
+   columns, and impl notes §"Methodology drift vs S-002" explicitly
+   pledges that the column set stays unchanged so the Sprint-1 row stays
+   comparable. Adding p99 would be a methodology break, not a fix. If
+   the operator wants p99 it can be added as a non-comparable column
+   later; flagging here so the human reviewer accepts the tradeoff
+   knowingly.
+
+2. **Plan T4 says "within ±20% of 2× single-request time"; code uses
+   `0.8×` lower bound + `2.5×` upper bound** (asymmetric, not ±20%).
+   Impl notes §T4 documents the asymmetry — the regression class S-021
+   actually guards against is "throughput collapses to serial" (upper
+   bound), and the lower bound exists only to flag "concurrency cap
+   broken upward". The wide upper bound is the price of running inside
+   TestClient on slow CI; the alternative is a flaky test. Defensible.
+
+3. **Absolute measurement is `_pending_` in both Sprint-1 and Sprint-6
+   rows of `baseline.md`.** Acknowledged in Sprint 6 plan §7 Risk row
+   ("S-021 inherits the obligation rather than blocks on it") and in
+   impl notes §"Out-of-scope (left for operator)". The structural work
+   — script flag, table layout, smoke gate — is what S-021 owns; the
+   operator action is now mechanical. Human reviewer should confirm
+   they're comfortable shipping the cycle with both rows `_pending_`,
+   or schedule the operator capture before S-026 / cycle close.
+
+## Human review checklist
+
+- [ ] Read `docs/perf/baseline.md` end-to-end. Confirm the two-subsection
+      split (Sprint-1 anchor / Sprint-6 post-cycle) reads cleanly and
+      the methodology-drift paragraph is sufficient.
+- [ ] Decide whether shipping with `_pending_` operator rows is
+      acceptable for cycle close, or whether operator capture must
+      happen before S-026 merges.
+- [ ] Accept (or push back on) deviation #1 above — p99 dropped to
+      preserve S-002 anchor column shape.
+- [ ] Accept (or push back on) deviation #2 above — asymmetric 0.8× /
+      2.5× band instead of literal ±20% on T4.
+- [ ] Confirm the `_PacedFakeProvider` smoke is the right surface for
+      CI (vs. e.g. a marker that skips on CI and runs on operator
+      hardware).
+- [ ] Eyeball `tests/test_perf_regression.py:213` — the T3 fixture
+      reaches deep into `app.state` (model_registry, provider_registry,
+      voice repos, semaphores, dependency_overrides). It works but is
+      verbose; the existing `tests/conftest.py::_stub_app_state` may be
+      reusable here. Not a blocker — flagged for future hygiene.
+
+## Test guidance (manual operator verification)
+
+```bash
+# 1. New smoke suite alone — confirms T3 + T4 in isolation
+uv run pytest tests/test_perf_regression.py -v
+
+# 2. Full suite — confirms no regression in counts vs baseline
+uv run pytest
+# expect: 380 passed + 2 skipped + 1 xfailed (baseline at story-review start)
+
+# 3. Static gates
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy --strict src/
+
+# 4. Script smoke (no service needed — argparse only)
+uv run python scripts/perf_baseline.py --help
+# confirm --endpoint {openai,rich} is listed with the documented default
+
+# 5. Operator absolute-number capture (out of scope for review but ready
+#    to run if reviewer wants to fill the _pending_ rows now):
+#    Terminal A:
+uv run uvicorn llm_tts_api.main:app --host 127.0.0.1 --port 8010
+#    Terminal B (paste each printed Markdown row into baseline.md):
+uv run python scripts/perf_baseline.py --endpoint openai \
+    --url http://127.0.0.1:8010 --voice alloy \
+    --model Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+    --runs 11 --warmup 1 \
+    --input tests/perf/fixtures/baseline_input.txt
+uv run python scripts/perf_baseline.py --endpoint rich \
+    --url http://127.0.0.1:8010 --voice alloy \
+    --model Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+    --runs 11 --warmup 1 \
+    --input tests/perf/fixtures/baseline_input.txt
+```
+
+## Files in scope (verified)
+
+- `scripts/perf_baseline.py` — `--endpoint` flag, `_ENDPOINT_PATHS`, endpoint
+  column in printed row.
+- `tests/test_perf_regression.py` — NEW; T3 + T4 in-suite smoke.
+- `docs/perf/baseline.md` — Sprint-1 / Sprint-6 subsection split,
+  methodology-drift note, in-suite smoke section.
+
+No source files under `src/llm_tts_api/` were touched — Sprint-6
+behavior-preservation invariant honored for S-021.
+
+---
+
+# S-026 — Story-level review (Phase 1S, cross-task coherence)
+
+**Scope:** S-026 (cycle-end code-duplication refactor). Single-story Step 2,
+no parallel tasks. Cross-task coherence here means: do the six T1–T7
+consolidations agree with each other and respect the cycle invariants
+(behavior-preserving, no docs drift, no startup regression, no perf
+regression)?
+
+**Verdict:** PASS with one comment-only coherence fix landed in this review
+worktree (commit `ab1a4f0`).
+
+---
+
+## Coherence findings
+
+### Fixed in this review
+
+1. **Stale post-refactor comment referenced a non-existent symbol.**
+   `src/llm_tts_api/routers/audio.py:51` (pre-fix) said the inline
+   `_RICH_ONLY_HEADERS` frozenset was *"kept in sync with
+   `synthesize_service._RICH_ONLY_HEADER_KEYS`"*. That symbol does not
+   exist — the impl notes (T2) explicitly explain why it was NOT created
+   (would have broken the UAT-OA-03 static import pin). The comment was
+   the pre-back-out plan and was not updated when the plan changed.
+   - **Risk if left:** the next reader would `grep` for the named symbol,
+     not find it, and either reintroduce it (breaking UAT-OA-03) or
+     conclude the strip-list is stale and "fix" it. Either failure mode
+     would silently regress S-018 byte-identity.
+   - **Fix:** rewrote the comment to explain the local-by-design choice
+     and point at the actual safety net (`tests/test_openai_adapter_parity.py`)
+     and the actual upstream producer (`synthesize_service._synthesis_headers`).
+     Comment-only — behavior, OpenAPI, all gates unchanged.
+
+### Clean (no action needed)
+
+- **T2/T2bis (header + request consolidation).** Both helpers in
+  `synthesize_service.py` (`_synthesis_headers`, `_build_synthesis_request`)
+  are pure constructors with explicit kwargs; the two call sites in
+  `_stream_synthesis_chunks` and `_run_synthesis` are mechanically identical
+  invocations. The conditional inclusion of `X-Chunks`/`X-Total-Duration-Ms`
+  preserves the prior streaming-vs-buffered branching exactly.
+- **T3 (`invalid_request` gains `status_code`).** Default 400 preserves
+  every existing call site; the one promoted 409 site (`voices.py`
+  `voice_id_exists`) routes through the same `OpenAIHTTPException(OpenAIError(...))`
+  construction it used inline before, so the envelope shape is byte-identical
+  (verified by S-018 parity UAT remaining green).
+- **T3 / `raise_not_implemented`.** Three routers (`audio.py`, `chat.py`,
+  `realtime.py`) now import the same helper; message string is
+  character-identical to the three former local copies. Static import
+  pins (UAT-OA-03 for `audio.py`) are unaffected — `errors` is already
+  whitelisted.
+- **T6 (test-fixture dedup).** `tests/fakes/seed_voice.py` defaults
+  (`target_db=-20.0`, `max_sentences_per_chunk=2`) match `VoiceRecord`
+  field defaults exactly, so callers that previously did not pass these
+  knobs (e.g. the old `test_openai_adapter.py::_seed_voice`) observe the
+  same record post-refactor. `tests/test_openai_adapter_parity.py` is
+  untouched (S-018 freeze gate).
+- **T4 / T5 (voice-id validation, allow-list).** Documented as-found in
+  impl notes; `grep` confirms `validate_voice_id` and
+  `tts_model_allowed_for_provider` are each single-source already.
+- **LOC threshold.** Net +13 lines (0.21% increase). The sprint plan's
+  explicit risk row permits documenting the result as "as-found" when the
+  codebase is already lean, which the impl notes do. The maintainability
+  claim is real — each consolidation point now has one edit site.
+
+## Invariants
+
+| Invariant | Status | Evidence |
+|---|---|---|
+| Behavior-preserving (S-026) | ✅ | `380 passed, 2 skipped, 3 deselected, 1 xfailed` — identical to step-1-end baseline |
+| No doc drift (S-019) | ✅ | `git diff master -- docs/openapi/openapi.yaml docs/README.md` empty post-fix |
+| No startup regression (S-020) | ✅ | No dep changes; `pyproject.toml` untouched |
+| No perf regression (S-021) | ✅ | Hot path (`synthesize_core`) only got two helper indirections — both inline-able and called per-chunk; no new I/O or allocations |
+| OpenAPI byte-identical | ✅ | `git diff master -- docs/openapi/openapi.yaml` = 0 lines |
+| S-018 paired UAT untouched | ✅ | `git diff master -- tests/test_openai_adapter_parity.py` = 0 lines |
+| Lint / type / audit | ✅ | ruff, ruff format, `mypy --strict` (52 files), pip-audit all green |
+
+---
+
+## Human review checklist
+
+Pre-merge sanity checks for the reviewer:
+
+- [ ] `git log --oneline master..sprint-6-S-026` shows exactly the
+  refactor commit (`4b01af0`) plus this review's comment fix (`ab1a4f0`).
+- [ ] `git diff master -- docs/openapi/openapi.yaml` is empty.
+- [ ] `git diff master -- tests/test_openai_adapter_parity.py` is empty.
+- [ ] `uv run pytest -q` → `380 passed, 2 skipped, 3 deselected, 1 xfailed`.
+- [ ] `uv run mypy --strict src/` → no issues, 52 source files.
+- [ ] `uv run ruff check . && uv run ruff format --check .` → clean.
+- [ ] `uv run pip-audit` → no known vulnerabilities.
+- [ ] Spot-check the four review touchpoints:
+  - `routers/audio.py` `_RICH_ONLY_HEADERS` block — comment now matches reality
+    (no dangling reference to `_RICH_ONLY_HEADER_KEYS`).
+  - `errors.invalid_request` — `status_code: int = 400` default is back-compat.
+  - `errors.raise_not_implemented` — `NoReturn` annotation; used identically
+    in all three routers.
+  - `tests/fakes/seed_voice.py` — defaults match `VoiceRecord` field defaults.
+
+## Operator test guidance
+
+The refactor is internal; no operator UAT step is required. A 60-second
+smoke is enough to corroborate the gates:
+
+```bash
+# In the review worktree (or after merge, on the integration branch):
+uv run pytest -q                          # expect 380 passed, 2 skipped, 1 xfailed
+uv run mypy --strict src/                 # expect no issues, 52 files
+uv run ruff check . && uv run ruff format --check .
+diff <(git show master:docs/openapi/openapi.yaml) docs/openapi/openapi.yaml   # empty
+diff <(git show master:tests/test_openai_adapter_parity.py) tests/test_openai_adapter_parity.py   # empty
+```
+
+Optional out-of-process perf sanity (matches S-021's methodology — bypasses
+the xfailed TestClient streaming buffer):
+
+```bash
+uv run python scripts/perf_baseline.py --quick   # compare against docs/perf/baseline.md
+```
+
+Expect TTFB / RTF within S-021's +10% budget; no change is expected since
+the refactor only adds two zero-cost helper indirections on the hot path.
+
+---
+
+**Reviewer:** Claude (Opus 4.7), story-level pass per Phase 1S of the
+review protocol. Coherence fix landed in-worktree (`ab1a4f0`); ready for
+coordinator merge.
+
+---
+
