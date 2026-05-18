@@ -8,6 +8,11 @@ from pathlib import Path
 _VALID_DEVICES: frozenset[str] = frozenset({"auto", "mps", "cuda", "cpu"})
 _VALID_DTYPES: frozenset[str] = frozenset({"auto", "float16", "bfloat16", "float32"})
 _VALID_LOG_FORMATS: frozenset[str] = frozenset({"text", "json"})
+# S-024 — voice blob backend selectors. The default is ``fs`` (the
+# FsBlobRepository introduced in S-022); ``s3`` flips the wiring in
+# ``dependencies.build_default_dependencies`` to an S3BlobRepository
+# (requires the ``[s3]`` optional extra).
+_VALID_VOICE_BLOB_BACKENDS: frozenset[str] = frozenset({"fs", "s3"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +97,19 @@ class Settings:
     # ``FsBlobRepository`` (``blobs/<id>.wav``) live underneath it.
     tts_voice_store_dir: Path = field(default_factory=lambda: Path("var/voices"))
 
+    # S-024 — voice blob backend selector. ``fs`` (default) keeps the
+    # zero-dependency FsBlobRepository under ``tts_voice_store_dir``;
+    # ``s3`` swaps in :class:`S3BlobRepository` (requires the ``[s3]``
+    # extra) and reads the three ``TTS_VOICE_BLOB_S3_*`` vars below.
+    tts_voice_blob_backend: str = "fs"
+    # S3 endpoint URL — leave empty for AWS S3, or set to a MinIO /
+    # other-compatible host (e.g. ``http://localhost:9000``).
+    tts_voice_blob_s3_endpoint: str = ""
+    # Target bucket name. REQUIRED when ``tts_voice_blob_backend == 's3'``.
+    tts_voice_blob_s3_bucket: str = ""
+    # AWS region; empty means "let aiobotocore resolve via env/config".
+    tts_voice_blob_s3_region: str = ""
+
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
         self._load_app_identity()
@@ -100,12 +118,33 @@ class Settings:
         self._load_tts_limits()
         self._load_runtime_knobs()
         self._load_voice_store_dir()
+        self._load_voice_blob_backend()
         self.tts_voice_map = self._load_voice_map_from_file()
 
     def _load_voice_store_dir(self) -> None:
         """Resolve ``TTS_VOICE_STORE_DIR`` (default ``var/voices/``)."""
         raw = os.environ.get("TTS_VOICE_STORE_DIR", "").strip()
         self.tts_voice_store_dir = Path(raw) if raw else Path("var/voices")
+
+    def _load_voice_blob_backend(self) -> None:
+        """Resolve ``TTS_VOICE_BLOB_BACKEND`` + S3-specific env vars (S-024).
+
+        When the backend is ``s3`` the bucket name MUST be set; the
+        endpoint/region are optional (AWS resolution covers the common
+        case, MinIO needs an explicit endpoint). Validation runs here
+        so misconfiguration fails fast at ``Settings()`` construction
+        rather than at first request.
+        """
+        self.tts_voice_blob_backend = self._load_enum(
+            "TTS_VOICE_BLOB_BACKEND",
+            _VALID_VOICE_BLOB_BACKENDS,
+            self.tts_voice_blob_backend,
+        )
+        self.tts_voice_blob_s3_endpoint = os.environ.get("TTS_VOICE_BLOB_S3_ENDPOINT", "").strip()
+        self.tts_voice_blob_s3_bucket = os.environ.get("TTS_VOICE_BLOB_S3_BUCKET", "").strip()
+        self.tts_voice_blob_s3_region = os.environ.get("TTS_VOICE_BLOB_S3_REGION", "").strip()
+        if self.tts_voice_blob_backend == "s3" and not self.tts_voice_blob_s3_bucket:
+            raise ValueError("TTS_VOICE_BLOB_S3_BUCKET must be set when TTS_VOICE_BLOB_BACKEND=s3")
 
     @staticmethod
     def _split_csv(raw: str) -> list[str]:

@@ -124,11 +124,13 @@ def build_default_dependencies() -> AppDependencies:
     )
     stt_service = STTService()
     # S-022: voice-store FS defaults rooted at ``settings.tts_voice_store_dir``.
-    # Step-2 stories swap these for Postgres/S3 implementations behind extras.
+    # S-024: blob backend is selected from ``settings.tts_voice_blob_backend``;
+    # the S3 path requires the optional ``[s3]`` extra and raises
+    # ``provider_error.missing_extra`` if the module is absent (NFR-ST-02).
     voice_metadata_repo: VoiceMetadataRepository = FsJsonMetadataRepository(
         settings.tts_voice_store_dir
     )
-    voice_blob_repo: VoiceBlobRepository = FsBlobRepository(settings.tts_voice_store_dir)
+    voice_blob_repo: VoiceBlobRepository = _build_voice_blob_repo(settings)
     return AppDependencies(
         settings=settings,
         device_profile=device_profile,
@@ -144,6 +146,42 @@ def build_default_dependencies() -> AppDependencies:
         voice_blob_repo=voice_blob_repo,
         model_locks=model_locks,
     )
+
+
+def _build_voice_blob_repo(settings: Settings) -> VoiceBlobRepository:
+    """Construct the blob repository selected by ``TTS_VOICE_BLOB_BACKEND``.
+
+    ``fs`` (default) returns :class:`FsBlobRepository` rooted at
+    ``settings.tts_voice_store_dir``. ``s3`` imports the optional
+    :mod:`llm_tts_api.services.voice_store.s3_blob` module — if the
+    ``[s3]`` extra is not installed, ``aiobotocore`` will be missing
+    and we surface a ``provider_error.missing_extra`` per NFR-ST-02
+    (named in the message so operators can run the right install
+    command). The import is local to keep the base install free of
+    aiobotocore (the ``base-install-no-extras-import`` smoke test in
+    ``test_voice_store.py`` enforces this).
+    """
+    backend = settings.tts_voice_blob_backend
+    if backend == "fs":
+        return FsBlobRepository(settings.tts_voice_store_dir)
+    if backend == "s3":
+        try:
+            from llm_tts_api.services.voice_store.s3_blob import S3BlobRepository
+        except ModuleNotFoundError as exc:
+            missing = exc.name or "aiobotocore"
+            raise RuntimeError(
+                "provider_error.missing_extra: "
+                f"TTS_VOICE_BLOB_BACKEND=s3 requires the '[s3]' extra "
+                f"(missing module: {missing}). Install with 'pip install .[s3]'."
+            ) from exc
+        return S3BlobRepository(
+            bucket=settings.tts_voice_blob_s3_bucket,
+            endpoint_url=settings.tts_voice_blob_s3_endpoint or None,
+            region_name=settings.tts_voice_blob_s3_region or None,
+        )
+    # Defensive: Settings validates the enum, so this branch is unreachable
+    # in normal operation but keeps mypy honest about the union.
+    raise ValueError(f"Unknown TTS_VOICE_BLOB_BACKEND={backend!r}")
 
 
 def _preload_models(

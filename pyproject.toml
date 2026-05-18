@@ -18,6 +18,12 @@ dependencies = [
   "psutil>=5.9.0",
 ]
 
+[project.optional-dependencies]
+# S-024: S3 blob backend for the voice store. Enable with `pip install .[s3]`.
+# Pinned to aiobotocore (asyncio S3 client) so the FsBlobRepository can be
+# swapped for S3BlobRepository without changing the surrounding async code.
+s3 = ["aiobotocore>=2.13.0"]
+
 [project.scripts]
 llm-tts-api = "llm_tts_api.main:run"
 
@@ -47,10 +53,13 @@ explicit_package_bases = true
 warn_unused_configs = true
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q -m 'not integration'"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+markers = [
+  "integration: requires an external service (MinIO/S3, Postgres). Skipped by default; opt in with `-m integration`.",
+]
 
 [tool.coverage.run]
 source = ["src/llm_tts_api"]

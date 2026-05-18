@@ -177,6 +177,17 @@ llm-tts-api
 - `TTS_MAX_INPUT_CHARS` (default: `4096`, minimum `256`)
 - `TTS_MAX_CONCURRENT_REQUESTS` (default: `1`)
 
+### Voice store (S-022 / S-024)
+
+- `TTS_VOICE_STORE_DIR` (default: `var/voices`) — directory hosting the FS-default metadata document and blobs.
+- `TTS_VOICE_BLOB_BACKEND` (default: `fs`) — `fs` keeps blobs under `TTS_VOICE_STORE_DIR/blobs/<id>.wav`; `s3` switches to the optional S3 backend (requires `pip install .[s3]`).
+- `TTS_VOICE_BLOB_S3_BUCKET` — REQUIRED when `TTS_VOICE_BLOB_BACKEND=s3`. Target bucket for blob storage.
+- `TTS_VOICE_BLOB_S3_ENDPOINT` — Optional override for non-AWS S3 (e.g. `http://localhost:9000` for MinIO).
+- `TTS_VOICE_BLOB_S3_REGION` — Optional AWS region; empty defers to aiobotocore's normal resolution (`AWS_REGION` / `AWS_DEFAULT_REGION` / `~/.aws/config`).
+- AWS credentials are read from the standard environment (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) or from `~/.aws/credentials` — no custom env vars are introduced.
+
+Selecting `TTS_VOICE_BLOB_BACKEND=s3` without the `[s3]` extra installed fails fast at startup with a `provider_error.missing_extra` message that names the missing module.
+
 ### Voice map
 
 - `TTS_VOICE_MAP_FILE` (required)
