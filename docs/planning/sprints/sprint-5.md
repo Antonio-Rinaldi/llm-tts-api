@@ -70,7 +70,7 @@ Pytest suite extended with: (a) OpenAI-shaped happy path against `TestClient`; (
 ---
 
 ### S-018: Byte-identity paired UAT (rich vs OpenAI)
-- **Status:** PLANNED
+- **Status:** READY-FOR-REVIEW
 - **Type:** Technical
 - **Parallel with:** None within this sprint
 - **Depends on (intra-sprint):** S-017
@@ -81,10 +81,10 @@ Pytest suite extended with: (a) OpenAI-shaped happy path against `TestClient`; (
 
 | # | Task | Purpose | Parallel | Status | Refs |
 |---|------|---------|----------|--------|------|
-| 1 | Build paired-request fixture | Construct an OpenAI-shaped request and the **equivalent** rich-endpoint request from the S-017 mapping table (Step 1, T1). Both go through the same warm-model code path. Same seed where the provider exposes one. | No (foundation) | PLANNED | UAT-OA-05 |
-| 2 | Implement byte-identity assertion (strict path) | `sha256` of the audio body from each endpoint must match for at least one provider/model combo on warm load. Test marked deterministic — gate of the strict-equivalence claim. | No (depends on T1) | PLANNED | NFR-PT-03b |
-| 3 | Implement relaxation path (RISK-8 fallback) | If a provider proves non-deterministic in CI, the test falls back to `±1 sample length + perceptual-hash threshold` per SRS §5 G-1. Relaxation threshold + rationale recorded in `docs/perf/baseline.md` (or sibling) and referenced from SRS §5. The strict path stays in CI for the deterministic provider/model. | No (depends on T2) | PLANNED | RISK-8, SRS §5 G-1 |
-| 4 | Wire into CI as a deselected-by-default integration test that runs nightly OR a regular unit test if cheap | Decision driven by warm-model cost. Default: paired test runs in the standard unit suite if model load is already amortized by other tests; otherwise marked `@pytest.mark.integration` and run on a dedicated CI job. Document the decision in the implementation notes. | No (depends on T2/T3) | PLANNED | UAT-OA-05 |
+| 1 | Build paired-request fixture | Construct an OpenAI-shaped request and the **equivalent** rich-endpoint request from the S-017 mapping table (Step 1, T1). Both go through the same warm-model code path. Same seed where the provider exposes one. | No (foundation) | READY-FOR-REVIEW | UAT-OA-05 |
+| 2 | Implement byte-identity assertion (strict path) | `sha256` of the audio body from each endpoint must match for at least one provider/model combo on warm load. Test marked deterministic — gate of the strict-equivalence claim. | No (depends on T1) | READY-FOR-REVIEW | NFR-PT-03b |
+| 3 | Implement relaxation path (RISK-8 fallback) | If a provider proves non-deterministic in CI, the test falls back to `±1 sample length + perceptual-hash threshold` per SRS §5 G-1. Relaxation threshold + rationale recorded in `docs/perf/baseline.md` (or sibling) and referenced from SRS §5. The strict path stays in CI for the deterministic provider/model. | No (depends on T2) | READY-FOR-REVIEW | RISK-8, SRS §5 G-1 |
+| 4 | Wire into CI as a deselected-by-default integration test that runs nightly OR a regular unit test if cheap | Decision driven by warm-model cost. Default: paired test runs in the standard unit suite if model load is already amortized by other tests; otherwise marked `@pytest.mark.integration` and run on a dedicated CI job. Document the decision in the implementation notes. | No (depends on T2/T3) | READY-FOR-REVIEW | UAT-OA-05 |
 
 #### Acceptance Criteria
 - Paired test exists and runs in CI.
