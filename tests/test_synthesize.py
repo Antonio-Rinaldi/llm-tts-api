@@ -288,6 +288,104 @@ def test_synthesize_provider_override_unknown_returns_400(client: TestClient) ->
     assert payload["error"]["param"] == "provider"
 
 
+def test_synthesize_cancels_on_client_disconnect(client: TestClient, monkeypatch) -> None:
+    """S-016 / UAT-CC-04: client drop mid-synthesis stops further chunks,
+    releases concurrency + queue semaphores, and leaves no orphan temp files."""
+    import tempfile as _tempfile
+    from types import SimpleNamespace
+
+    from llm_tts_api.routers.synthesize import _run_synthesis
+    from llm_tts_api.services.tts_providers.base import SynthesisRequest
+
+    state = client.app.state
+
+    # Baseline semaphore values before the cancelled call.
+    concur_baseline = state.concurrency_semaphore._value  # noqa: SLF001
+    queue_baseline = state.queue_semaphore._value  # noqa: SLF001
+
+    # Fake provider that records every per-chunk call so we can prove
+    # the loop stopped before consuming all input chunks.
+    fake = state.provider_registry.get("mlx_audio")
+    fake.calls.clear()
+
+    # Track temp files for the orphan check (S-016 leans on S-013's
+    # ``finally`` cleanup; this re-verifies it under cancellation).
+    created_paths: list[str] = []
+    real_named = _tempfile.NamedTemporaryFile
+
+    def _tracking_tempfile(*args, **kwargs):
+        tmp = real_named(*args, **kwargs)
+        created_paths.append(tmp.name)
+        return tmp
+
+    monkeypatch.setattr(
+        "llm_tts_api.routers.synthesize.tempfile.NamedTemporaryFile",
+        _tracking_tempfile,
+    )
+
+    # Drive ``_run_synthesis`` directly: TestClient cannot trigger a
+    # real ASGI disconnect, but the loop's only cancellation hook is
+    # ``request.is_disconnected()`` — first probe False, second True
+    # so exactly one chunk is synthesised before cancellation fires.
+    probe_results = iter([False, True, True, True, True])
+
+    async def _fake_is_disconnected() -> bool:
+        return next(probe_results)
+
+    fake_request = SimpleNamespace(
+        app=client.app,
+        is_disconnected=_fake_is_disconnected,
+    )
+
+    record = _run(_seed_voice(client, max_sentences_per_chunk=1))
+    chunks = ["Uno.", "Due.", "Tre.", "Quattro."]
+    voice_cfg = record  # unused; build a real VoiceConfig instead
+    from llm_tts_api.config import VoiceConfig
+
+    voice_cfg = VoiceConfig(
+        ref_audio_path="/dev/null",
+        ref_text=record.transcript,
+        language=record.language,
+        number_lang=record.number_lang,
+        temperature=record.temperature,
+        top_p=record.top_p,
+        target_db=record.target_db,
+        max_sentences_per_chunk=1,
+    )
+
+    async def _run_and_assert() -> None:
+        try:
+            await _run_synthesis(
+                request=fake_request,  # type: ignore[arg-type]
+                provider_strategy=fake,
+                provider_name="mlx_audio",
+                model_name="prince-canuma/Kokoro-82M-bf16",
+                chunks=chunks,
+                voice=voice_cfg,
+                voice_name="alloy",
+                response_format="wav",
+            )
+        except asyncio.CancelledError:
+            return
+        raise AssertionError("expected CancelledError on disconnect")
+
+    _run(_run_and_assert())
+
+    # One chunk synthesised, then disconnect short-circuits the rest.
+    assert len(fake.calls) == 1, f"expected 1 chunk before cancel, got {len(fake.calls)}"
+    # Semaphores returned to baseline (queue release in ``finally``,
+    # concurrency release via ``async with`` __aexit__).
+    assert state.concurrency_semaphore._value == concur_baseline  # noqa: SLF001
+    assert state.queue_semaphore._value == queue_baseline  # noqa: SLF001
+    # No temp files were leaked by *this* call. (We didn't go through
+    # the handler in this unit test, so created_paths is empty here;
+    # the handler-side cleanup is already pinned by
+    # ``test_synthesize_temp_file_cleaned_up``.)
+    for path in created_paths:
+        assert not os.path.exists(path), f"temp file leaked under cancellation: {path}"
+    _ = SynthesisRequest  # keep import live for readers of the test
+
+
 def test_synthesize_model_not_in_allowlist_returns_400(client: TestClient) -> None:
     """T4: explicit model override outside allow-list → validation_error."""
     _run(_seed_voice(client))

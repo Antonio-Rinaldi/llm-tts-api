@@ -357,21 +357,44 @@ async def _run_synthesis(
                 lock = asyncio.Lock()
                 model_locks[key] = lock
             async with lock:
-                synthesis_req = SynthesisRequest(
-                    model_name=model_name,
-                    chunks=chunks,
-                    voice=voice,
-                    voice_name=voice_name,
-                    response_format=response_format,
-                    generation=GenerationOptions(
-                        language=voice.language,
-                        temperature=voice.temperature,
-                        top_p=voice.top_p,
-                    ),
-                )
-                result: list[bytes] = await anyio.to_thread.run_sync(
-                    provider_strategy.synthesize_chunks, synthesis_req
-                )
-                return result
+                # S-016: synthesise chunk-by-chunk so we can probe
+                # ``request.is_disconnected()`` at every boundary
+                # (FR-CC-05 / UAT-CC-04). The Strategy contract is still
+                # ``synthesize_chunks(SynthesisRequest)`` returning ``list[bytes]``;
+                # we just feed it one chunk at a time. Releasing the
+                # semaphores + lock on cancellation is handled by the
+                # surrounding context managers' __aexit__ + this finally.
+                outputs: list[bytes] = []
+                for index, chunk_text in enumerate(chunks):
+                    if await request.is_disconnected():
+                        logger.info(
+                            (
+                                "synthesize cancelled by client disconnect | "
+                                "provider=%s model=%s voice=%s chunks_done=%d/%d"
+                            ),
+                            provider_name,
+                            model_name,
+                            voice_name,
+                            index,
+                            len(chunks),
+                        )
+                        raise asyncio.CancelledError("client disconnected")
+                    synthesis_req = SynthesisRequest(
+                        model_name=model_name,
+                        chunks=[chunk_text],
+                        voice=voice,
+                        voice_name=voice_name,
+                        response_format=response_format,
+                        generation=GenerationOptions(
+                            language=voice.language,
+                            temperature=voice.temperature,
+                            top_p=voice.top_p,
+                        ),
+                    )
+                    chunk_results = await anyio.to_thread.run_sync(
+                        provider_strategy.synthesize_chunks, synthesis_req
+                    )
+                    outputs.extend(chunk_results)
+                return outputs
     finally:
         queue_sem.release()
