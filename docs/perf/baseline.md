@@ -8,14 +8,25 @@
    ```bash
    uv run uvicorn llm_tts_api.main:app --host 127.0.0.1 --port 8010
    ```
-2. In another terminal, run the measurement script:
+2. In another terminal, run the measurement script against **both** surfaces
+   (S-021 T1 + T2 — they share the `synthesize_core` pipeline so the two
+   numbers should match within noise):
    ```bash
+   # OpenAI-adapter path (the S-002 anchor)
    uv run python scripts/perf_baseline.py \
        --url http://127.0.0.1:8010 \
+       --endpoint openai \
        --voice alloy \
        --model Qwen/Qwen3-TTS-12Hz-0.6B-Base \
        --runs 11 \
        --warmup 1 \
+       --input tests/perf/fixtures/baseline_input.txt
+
+   # Rich endpoint (S-021 T1)
+   uv run python scripts/perf_baseline.py --endpoint rich \
+       --url http://127.0.0.1:8010 \
+       --voice alloy --model Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+       --runs 11 --warmup 1 \
        --input tests/perf/fixtures/baseline_input.txt
    ```
 3. Paste the printed Markdown row into the **Measurements** table below.
@@ -31,17 +42,66 @@
 
 ## Measurements
 
-The S-021 regression gate compares end-of-cycle numbers to the first row below. Append new rows on each re-measurement; never overwrite history.
+The S-021 regression gate compares end-of-cycle numbers to the Sprint-1
+anchor row. Append new rows on each re-measurement; never overwrite history.
 
-| Commit SHA | Host | Voice | Input | Runs | p50 | p95 | min | max |
-|---|---|---|---|---|---|---|---|---|
-| _pending — run on Apple Silicon and paste here_ | — | alloy | 700 chars | 11 | — | — | — | — |
+The Sprint-1 anchor row from S-002 was carried as `_pending_` (operator
+action) — S-021 inherits the obligation rather than blocking on it (see
+Sprint 6 plan §7 Risk row). The Sprint-6 measurement script supports
+**both** the OpenAI-adapter and rich endpoints (`--endpoint openai|rich`);
+when the operator runs against real hardware, both rows go in below.
+
+### Sprint 1 anchor (S-002)
+
+| Commit SHA | Endpoint | Host | Voice | Input | Runs | p50 | p95 | min | max |
+|---|---|---|---|---|---|---|---|---|---|
+| _pending — operator to run S-002 methodology on Apple Silicon and paste here_ | openai | — | alloy | 700 chars | 11 | — | — | — | — |
+
+### Sprint 6 post-cycle measurement (S-021 T5)
+
+Operator captures both rows on the same warm-model session so the rich vs
+OpenAI-adapter comparison is fair (S-021 T2 — both paths share
+`synthesize_core` per S-017, so any divergence is measurement noise or a
+regression in one of the routers' thin wrappers).
+
+| Commit SHA | Endpoint | Host | Voice | Input | Runs | p50 | p95 | min | max |
+|---|---|---|---|---|---|---|---|---|---|
+| _pending — operator to run on Apple Silicon, `--endpoint openai`_ | openai | — | alloy | 700 chars | 11 | — | — | — | — |
+| _pending — operator to run on Apple Silicon, `--endpoint rich`_ | rich | — | alloy | 700 chars | 11 | — | — | — | — |
+
+**Regression verdict (filled by operator):** compute `(p50_sprint6 -
+p50_sprint1) / p50_sprint1` and the same for p95. The +10% budget below
+applies to both endpoints; record PASS/FAIL inline next to each Sprint-6
+row.
+
+**Methodology drift since S-002:** the script gained a `--endpoint`
+flag (default `openai`, matching the S-002 anchor exactly so the
+Sprint-1 row stays comparable). The reference input, voice, warmup
+discipline, and 11-run sample size are unchanged. Hardware should be the
+same Apple Silicon class host as S-002; record any substitution
+explicitly in a footnote row.
 
 ## Regression policy (NFR-PF-01)
 
-- **+10% budget** on both p50 and p95 between the baseline row above and any later measurement against the same input + voice + warm model.
+- **+10% budget** on both p50 and p95 between the Sprint-1 anchor and any later measurement against the same input + voice + warm model.
 - A regression beyond budget blocks the cycle's success criteria.
+- The rich vs OpenAI-adapter Sprint-6 rows should agree within measurement noise (no documented budget — they share `synthesize_core` per S-017).
 - If hardware changes mid-cycle, capture a fresh baseline on the new host and document the substitution explicitly.
+
+## In-suite smoke (S-021)
+
+`tests/test_perf_regression.py` runs in the standard unit suite and pins
+the *shape* of NFR-PF-02 (UAT-CC-02) and UAT-CC-01 against the in-process
+`FakeTTSProvider`. It does NOT replace the operator-driven absolute
+measurement above — its job is to keep the perf invariants exercised on
+every commit:
+
+- **`/health` p95 under in-flight synthesis** — relaxed 200 ms ceiling
+  (vs the 50 ms NFR budget on real hardware) absorbs TestClient +
+  scheduler jitter on slow CI runners.
+- **4 parallel @ cap=2 within ±20% of 2× single** — generous upper bound
+  catches the "concurrency cap collapsed to serial" regression class
+  without flaking on millisecond-level jitter.
 
 ## Notes
 
