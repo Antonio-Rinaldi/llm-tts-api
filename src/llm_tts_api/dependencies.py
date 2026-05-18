@@ -66,6 +66,44 @@ class AppDependencies:
     model_locks: ModelLockMap = field(default_factory=dict)
 
 
+def build_voice_metadata_repo(settings: Settings) -> VoiceMetadataRepository:
+    """Construct the metadata repository for the configured backend.
+
+    Dispatches on ``settings.tts_voice_metadata_backend``:
+
+    * ``fs_json`` (default) → :class:`FsJsonMetadataRepository`, no extras.
+    * ``postgres`` → :class:`PostgresMetadataRepository`, requires the
+      ``[postgres]`` extra and a non-empty ``TTS_VOICE_METADATA_DSN``.
+      A missing ``psycopg`` import is surfaced as ``config_error.missing_extra``
+      (NFR-ST-02) so operators can identify the wiring problem from the
+      startup log without reading a traceback.
+    """
+    backend = settings.tts_voice_metadata_backend
+    if backend == "fs_json":
+        return FsJsonMetadataRepository(settings.tts_voice_store_dir)
+    if backend == "postgres":
+        try:
+            from llm_tts_api.services.voice_store.postgres_metadata import (
+                PostgresMetadataRepository,
+            )
+        except ModuleNotFoundError as exc:
+            missing = exc.name or "psycopg"
+            raise RuntimeError(
+                "config_error.missing_extra: voice metadata backend 'postgres' "
+                f"requires the [postgres] extra (missing module: {missing}). "
+                "Install via `pip install '.[postgres]'`."
+            ) from exc
+        dsn = settings.tts_voice_metadata_dsn
+        if not dsn:
+            raise ValueError(
+                "TTS_VOICE_METADATA_DSN must be set when TTS_VOICE_METADATA_BACKEND=postgres"
+            )
+        return PostgresMetadataRepository(dsn)
+    # Settings._load_voice_metadata_backend rejects unknown values at startup,
+    # so this branch is defensive (e.g. tests that bypass __post_init__).
+    raise ValueError(f"unknown voice metadata backend: {backend!r}")
+
+
 def build_default_dependencies() -> AppDependencies:
     """Construct the full default dependency graph from environment.
 
@@ -123,11 +161,10 @@ def build_default_dependencies() -> AppDependencies:
         model_locks=model_locks,
     )
     stt_service = STTService()
-    # S-022: voice-store FS defaults rooted at ``settings.tts_voice_store_dir``.
-    # Step-2 stories swap these for Postgres/S3 implementations behind extras.
-    voice_metadata_repo: VoiceMetadataRepository = FsJsonMetadataRepository(
-        settings.tts_voice_store_dir
-    )
+    # S-022 + S-023: voice-store backend selectors. Default FS impls keep
+    # the zero-external-services deploy story; alternate impls live behind
+    # optional extras and are dispatched on the corresponding env var.
+    voice_metadata_repo = build_voice_metadata_repo(settings)
     voice_blob_repo: VoiceBlobRepository = FsBlobRepository(settings.tts_voice_store_dir)
     return AppDependencies(
         settings=settings,

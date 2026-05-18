@@ -21,6 +21,14 @@ dependencies = [
 [project.scripts]
 llm-tts-api = "llm_tts_api.main:run"
 
+[project.optional-dependencies]
+# S-023 — Postgres metadata backend. Selecting
+# ``TTS_VOICE_METADATA_BACKEND=postgres`` without this extra installed fails
+# startup with ``config_error.missing_extra`` (NFR-ST-02).
+postgres = [
+  "psycopg[binary]>=3.1",
+]
+
 [dependency-groups]
 dev = [
   "pytest>=8.0.0",
@@ -30,6 +38,13 @@ dev = [
   "ruff>=0.6.0",
   "mypy>=1.10.0",
   "pip-audit>=2.7.0",
+  # Type-checking the optional postgres backend under ``mypy --strict``
+  # needs ``psycopg`` importable in the dev environment. The "base install
+  # does not import psycopg" check in ``tests/test_voice_store.py`` uses a
+  # fresh subprocess that only imports the voice_store package — which
+  # never imports ``postgres_metadata`` — so this dev dep does NOT leak
+  # into the default install path.
+  "psycopg[binary]>=3.1",
 ]
 
 [tool.ruff]
@@ -51,10 +66,19 @@ addopts = "-q"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+markers = [
+    "integration: tests requiring external infrastructure (Postgres, S3); skipped by default unless the relevant DSN/endpoint env var is set.",
+]
 
 [tool.coverage.run]
 source = ["src/llm_tts_api"]
 branch = false
+# S-023 — Postgres backend exercises live psycopg + a running database;
+# CI does not provision Postgres so the integration test skips. Omitting
+# keeps the coverage floor (83%) honest about what unit tests verify.
+omit = [
+    "src/llm_tts_api/services/voice_store/postgres_metadata.py",
+]
 
 [tool.coverage.report]
 show_missing = true
