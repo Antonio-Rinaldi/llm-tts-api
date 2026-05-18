@@ -263,7 +263,7 @@ def test_synthesize_temp_file_cleaned_up(client: TestClient, tmp_path, monkeypat
         return tmp
 
     monkeypatch.setattr(
-        "llm_tts_api.routers.synthesize.tempfile.NamedTemporaryFile",
+        "llm_tts_api.services.synthesize_service.tempfile.NamedTemporaryFile",
         _tracking_tempfile,
     )
 
@@ -321,7 +321,7 @@ def test_synthesize_cancels_on_client_disconnect(client: TestClient, monkeypatch
         return tmp
 
     monkeypatch.setattr(
-        "llm_tts_api.routers.synthesize.tempfile.NamedTemporaryFile",
+        "llm_tts_api.services.synthesize_service.tempfile.NamedTemporaryFile",
         _tracking_tempfile,
     )
 
@@ -708,7 +708,7 @@ def test_streaming_releases_queue_semaphore_and_cleans_temp_file(
         return tmp
 
     monkeypatch.setattr(
-        "llm_tts_api.routers.synthesize.tempfile.NamedTemporaryFile",
+        "llm_tts_api.services.synthesize_service.tempfile.NamedTemporaryFile",
         _tracking_tempfile,
     )
 

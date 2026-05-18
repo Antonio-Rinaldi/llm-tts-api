@@ -70,6 +70,10 @@ def test_speech_rejects_empty_input(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_speech_rejects_unmapped_voice(monkeypatch, tmp_path: Path) -> None:
+    """S-017: unmapped voice flows through the rich pipeline's voice-store
+    lookup, which surfaces ``voice_error.voice_not_found`` (404) — the same
+    envelope the rich endpoint emits. The adapter never duplicates error
+    mapping (FR-OA-02)."""
     client = _build_client_with_voice(monkeypatch, tmp_path)
 
     response = client.post(
@@ -77,9 +81,10 @@ def test_speech_rejects_unmapped_voice(monkeypatch, tmp_path: Path) -> None:
         json={"model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base", "voice": "nova", "input": "hello"},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 404
     payload = response.json()
-    assert payload["error"]["type"] == "validation_error"
+    assert payload["error"]["type"] == "voice_error"
+    assert payload["error"]["code"] == "voice_not_found"
     assert payload["error"]["param"] == "voice"
 
 
@@ -173,5 +178,9 @@ def test_speech_forwards_clone_voice_config_to_mlx_provider(monkeypatch, tmp_pat
 
     assert response.status_code == 200
     assert captured["voice_name"] == "alloy"
-    assert captured["ref_audio_path"].endswith("alloy.wav")
+    # S-017: the rich pipeline writes the blob to a per-request tempfile
+    # before calling the provider (the seed ingestor stored the blob
+    # under the voice id). The temp path uses the ``voice-<id>-`` prefix.
+    assert "voice-alloy-" in captured["ref_audio_path"]
+    assert captured["ref_audio_path"].endswith(".wav")
     assert captured["ref_text"] == "sample"
