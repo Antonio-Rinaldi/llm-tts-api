@@ -27,11 +27,14 @@ import logging
 import os
 import tempfile
 import wave
+from collections.abc import AsyncIterator, Mapping, MutableMapping
 from contextlib import suppress
-from typing import Annotated
+from typing import Annotated, Any
 
 import anyio.to_thread
 from fastapi import APIRouter, Depends, Request, Response
+from starlette.responses import StreamingResponse
+from starlette.types import Receive, Scope, Send
 
 from llm_tts_api.config import Settings, VoiceConfig
 from llm_tts_api.dependencies import (
@@ -151,6 +154,134 @@ def _build_voice_config(
     )
 
 
+def _client_advertises_trailers(request: Request) -> bool:
+    """S-015.T2: ``TE`` header parsing per RFC 9110 §10.1.4.
+
+    The header is a comma-separated list of transfer codings; ``trailers``
+    in the list signals the client can accept response trailers. We treat
+    any case-insensitive match in the list as a yes.
+    """
+    te_header = request.headers.get("te", "")
+    if not te_header:
+        return False
+    tokens = [t.strip().split(";", 1)[0].lower() for t in te_header.split(",")]
+    return "trailers" in tokens
+
+
+class _TrailerStreamingResponse(StreamingResponse):
+    """Streaming WAV response with optional end-of-stream trailers.
+
+    Emits ``X-Chunks`` + ``X-Total-Duration-Ms`` as response trailers
+    **only** when both:
+
+    * the ASGI scope advertises ``extensions['http.response.trailers']``
+      (uvicorn ≥0.24 declares this), and
+    * the client previously set ``TE: trailers``.
+
+    When either condition is missing the trailers are silently omitted
+    per SRS §5 Resolution G-3 — we never fake the totals and we never
+    block the stream to wait for chunk-count finality.
+    """
+
+    def __init__(
+        self,
+        content: AsyncIterator[bytes],
+        *,
+        headers: Mapping[str, str],
+        totals: dict[str, int],
+        te_trailers: bool,
+    ) -> None:
+        super().__init__(
+            content=content, status_code=200, headers=dict(headers), media_type="audio/wav"
+        )
+        self._totals = totals
+        self._te_trailers = te_trailers
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        extensions = scope.get("extensions") or {}
+        supports_trailers = self._te_trailers and "http.response.trailers" in extensions
+
+        async def _send_with_trailer_flag(message: MutableMapping[str, Any]) -> None:
+            if message["type"] == "http.response.start" and supports_trailers:
+                message["trailers"] = True
+            await send(message)
+
+        await super().__call__(scope, receive, _send_with_trailer_flag)
+
+        if supports_trailers:
+            await send(
+                {
+                    "type": "http.response.trailers",
+                    "headers": [
+                        (b"x-chunks", str(self._totals.get("chunks", 0)).encode()),
+                        (
+                            b"x-total-duration-ms",
+                            str(self._totals.get("duration_ms", 0)).encode(),
+                        ),
+                    ],
+                    "more_trailers": False,
+                }
+            )
+
+
+async def _stream_synthesis_chunks(
+    *,
+    provider_strategy: TTSProviderStrategy,
+    provider_name: str,
+    model_name: str,
+    chunks: list[str],
+    voice: VoiceConfig,
+    voice_name: str,
+    response_format: str,
+    target_db: float,
+    concur_sem: asyncio.Semaphore,
+    queue_sem: asyncio.Semaphore,
+    model_locks: dict[tuple[str, str], asyncio.Lock],
+    tmp_path: str,
+    totals: dict[str, int],
+) -> AsyncIterator[bytes]:
+    """S-015.T3: per-chunk async generator — yields WAV bytes as each chunk completes.
+
+    Owns the teardown of the concurrency semaphore, the queue admission
+    slot, and the temp file. The queue slot is assumed already acquired
+    by the caller so a saturated queue can fail-fast with 429 before any
+    response bytes are sent. S-016 (cancellation) will poll
+    ``request.is_disconnected()`` between yields.
+    """
+    try:
+        async with concur_sem:
+            key = (provider_name, model_name)
+            lock = model_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                model_locks[key] = lock
+            async with lock:
+                for chunk_text in chunks:
+                    synthesis_req = SynthesisRequest(
+                        model_name=model_name,
+                        chunks=[chunk_text],
+                        voice=voice,
+                        voice_name=voice_name,
+                        response_format=response_format,
+                        generation=GenerationOptions(
+                            language=voice.language,
+                            temperature=voice.temperature,
+                            top_p=voice.top_p,
+                        ),
+                    )
+                    result: list[bytes] = await anyio.to_thread.run_sync(
+                        provider_strategy.synthesize_chunks, synthesis_req
+                    )
+                    chunk_wav = normalize_wav_rms(result[0], target_db=target_db)
+                    totals["chunks"] += 1
+                    totals["duration_ms"] += _wav_duration_ms(chunk_wav)
+                    yield chunk_wav
+    finally:
+        queue_sem.release()
+        with suppress(OSError):
+            os.remove(tmp_path)
+
+
 async def _resolve_voice(
     voice_id: str,
     metadata_repo: VoiceMetadataRepository,
@@ -262,6 +393,51 @@ async def synthesize(
         )
         if not chunks:
             raise invalid_request("input is required", param="input")
+
+        # S-015: streaming branch. Response-start headers carry the
+        # FR-EP-04 inventory minus the two end-of-stream fields; the
+        # generator owns tmp-file + semaphore teardown so we hand off
+        # tmp_path ownership before returning. Queue admission is taken
+        # here (not in the generator) so saturation fails fast as 429
+        # before any response bytes are written.
+        if payload.stream:
+            queue_sem: asyncio.Semaphore = request.app.state.queue_semaphore
+            if queue_sem.locked():
+                raise capacity_error("queue_full", "Server is at capacity; queue is full")
+            await queue_sem.acquire()
+            owned_tmp_path = tmp_path
+            tmp_path = None
+            totals: dict[str, int] = {"chunks": 0, "duration_ms": 0}
+            stream_headers: dict[str, str] = {
+                "X-Request-ID": current_request_id(),
+                "X-Provider": provider_name,
+                "X-Model": model_name,
+                "X-Device": device_profile.device,
+                "X-Dtype": device_profile.dtype,
+                "X-Voice-Source": str(record.source),
+                "X-Voice-Id": record.id,
+            }
+            generator = _stream_synthesis_chunks(
+                provider_strategy=provider_strategy,
+                provider_name=provider_name,
+                model_name=model_name,
+                chunks=chunks,
+                voice=voice_config,
+                voice_name=voice_id,
+                response_format=payload.response_format,
+                target_db=voice_config.target_db,
+                concur_sem=request.app.state.concurrency_semaphore,
+                queue_sem=queue_sem,
+                model_locks=request.app.state.model_locks,
+                tmp_path=owned_tmp_path,
+                totals=totals,
+            )
+            return _TrailerStreamingResponse(
+                generator,
+                headers=stream_headers,
+                totals=totals,
+                te_trailers=_client_advertises_trailers(request),
+            )
 
         # T5: queue admission (non-blocking; overflow → 429), concurrency
         # cap, and per-(provider, model) lock around the sync provider
