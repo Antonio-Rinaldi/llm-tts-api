@@ -18,16 +18,20 @@ dependencies = [
   "psutil>=5.9.0",
 ]
 
-[project.scripts]
-llm-tts-api = "llm_tts_api.main:run"
-
 [project.optional-dependencies]
 # S-023 — Postgres metadata backend. Selecting
 # ``TTS_VOICE_METADATA_BACKEND=postgres`` without this extra installed fails
-# startup with ``config_error.missing_extra`` (NFR-ST-02).
+# startup with ``provider_error.missing_extra`` (NFR-ST-02).
 postgres = [
   "psycopg[binary]>=3.1",
 ]
+# S-024 — S3 blob backend for the voice store. Enable with `pip install .[s3]`.
+# Pinned to aiobotocore (asyncio S3 client) so the FsBlobRepository can be
+# swapped for S3BlobRepository without changing the surrounding async code.
+s3 = ["aiobotocore>=2.13.0"]
+
+[project.scripts]
+llm-tts-api = "llm_tts_api.main:run"
 
 [dependency-groups]
 dev = [
@@ -62,12 +66,12 @@ explicit_package_bases = true
 warn_unused_configs = true
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q -m 'not integration'"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 markers = [
-    "integration: tests requiring external infrastructure (Postgres, S3); skipped by default unless the relevant DSN/endpoint env var is set.",
+    "integration: tests requiring external infrastructure (Postgres, S3, MinIO); skipped by default unless the relevant DSN/endpoint env var is set. Opt in with `-m integration`.",
 ]
 
 [tool.coverage.run]
