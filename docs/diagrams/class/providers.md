@@ -112,6 +112,18 @@ classDiagram
     VllmOmniTTSProvider ..> VoiceArgsSelection : uses
 ```
 
+## Auto-selection capability matrix (S-006)
+
+`dependencies.build_default_dependencies` constructs the `DeviceProfile` from `TTS_DEVICE` (default `auto`) and feeds it to `select_provider(device_profile, registry, override=TTS_PROVIDER)`. The first registered provider whose `supports_devices` contains the detected device wins; `TTS_PROVIDER` overrides auto-selection but is still validated against the device.
+
+| Provider    | `supports_devices` | Auto-picked on            | `TTS_PROVIDER` override valid on | If chosen with incompatible device                       |
+|-------------|--------------------|---------------------------|----------------------------------|----------------------------------------------------------|
+| `mlx_audio` | `{mps}`            | Apple Silicon (MPS)       | `mps`                            | `provider_error.no_viable_provider` at startup           |
+| `voxtral`   | `{mps}`            | Apple Silicon (MPS)       | `mps`                            | `provider_error.no_viable_provider` at startup           |
+| `vllm-omni` | `{cuda}`           | CUDA hosts                | `cuda`                           | `provider_error.no_viable_provider` at startup           |
+
+`ProviderSelection.source` records whether the choice came from auto-detection (`"auto"`) or from the env override (`"env"`); the `/health` endpoint surfaces it as `provider_source` so operators can confirm which path picked the active provider.
+
 ## Notes
 - Per-provider runtime sequences: [mlx-audio](../sequence/provider-mlx-audio.md), [voxtral](../sequence/provider-voxtral.md), [vllm-omni](../sequence/provider-vllm-omni.md).
-- Adding a new provider = (a) subclass `CachedModelProvider`, (b) register it in `dependencies.get_tts_provider_registry`, (c) add an env-driven model allow-list in `Settings._load_provider_models`.
+- Adding a new provider = (a) subclass `CachedModelProvider`, (b) declare `supports_devices`, (c) register it in `dependencies.build_default_dependencies` (order = priority for auto-selection), (d) add an env-driven model allow-list in `Settings._load_provider_models`.

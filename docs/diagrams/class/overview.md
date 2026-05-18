@@ -1,83 +1,120 @@
 # llm-tts-api — Service Overview
 
 ## Purpose
-High-level class structure for the TTS request pipeline. `TTSService` is the facade injected into the audio router; internally it composes three single-responsibility collaborators: validate/normalize the request, synthesize WAV bytes, then wrap the result in an HTTP response.
+Top-level composition of the post-Sprint-5 service. The rich endpoint (`POST /v1/tts/synthesize`) and the OpenAI adapter (`POST /v1/audio/speech`) both delegate to the single service-layer entry point `services/synthesize_service.synthesize_core` (BR-9, NFR-PT-03b). The voice store sits behind two Protocols (see [voice-store.md](voice-store.md)); the provider layer is auto-selected from the `DeviceProfile` (see [providers.md](providers.md)).
 
 ## Participants
-- `TTSService` — `src/llm_tts_api/services/tts_service.py:244-297` (facade, preloads default model in `__init__`)
-- `SpeechRequestResolver` — `tts_service.py:101-181`
-- `SpeechSynthesizer` — `tts_service.py:184-216` (owns the bounded-concurrency `asyncio.Semaphore`)
-- `SpeechResponseFactory` — `tts_service.py:219-241`
-- `ResolvedSpeechRequest` — `tts_service.py:33-43` (DTO between resolver and synthesizer)
-- `STTService` — `src/llm_tts_api/services/stt_service.py` (placeholder, raises 501)
-- Router entry points — `src/llm_tts_api/routers/audio.py`, `routers/health.py`, `routers/models.py`
+- `create_app`, lifespan — `src/llm_tts_api/main.py:136-227`
+- DI getters — `src/llm_tts_api/dependencies.py`
+- `synthesize_core` (the single synthesis pipeline) — `src/llm_tts_api/services/synthesize_service.py`
+- Router handlers — `routers/{health,models,audio,synthesize,voices,chat,realtime}.py`
+- `Settings`, `VoiceConfig` — `config.py`
+- `TTSProviderRegistry`, `ProviderSelection`, `DeviceProfile` — `services/tts_providers/`
+- `ModelCache`, `ModelRegistry` — `services/`
+- `VoiceMetadataRepository`, `VoiceBlobRepository`, `VoiceSeedIngestor` — `services/voice_store/`
 
 ## Narrative
-The router builds a `SpeechRequest` Pydantic model and hands it to `TTSService.create_speech`. The service delegates in three phases:
+The FastAPI lifespan constructs every collaborator once via `build_default_dependencies` and stashes them on `app.state`. Routers receive them through `Annotated[..., Depends(get_*)]`. The `ready` flag flips True only after the seed-ingestion pass runs (so a startup `GET /v1/tts/voices` already reflects the seed file). On shutdown the flag flips False first, the seed watcher task is cancelled, and `_drain_concurrency` waits up to `TTS_SHUTDOWN_DRAIN_SECONDS` for in-flight synthesis to release the concurrency semaphore.
 
-1. **Resolve** — `SpeechRequestResolver` validates input presence, resolves model/provider/voice through the `ModelRegistry`, selects the response format, preprocesses text (punctuation, numbers, dates) and splits it into chunks via `split_text_semantic`. Result: a `ResolvedSpeechRequest`.
-2. **Synthesize** — `SpeechSynthesizer.generate` acquires a class-level semaphore (bounded concurrent generations), looks the provider up in the `TTSProviderRegistry`, asks it to synthesize each chunk, normalizes each chunk's RMS via `normalize_wav_rms`, then concatenates them into a single WAV.
-3. **Respond** — `SpeechResponseFactory.build` either streams the bytes back (`StreamingResponse`) or writes them to a temp file (`FileResponse` with a `BackgroundTask` cleanup).
-
-The placeholder routers (`chat.py`, `realtime.py`, voice-consent endpoints in `audio.py`) all raise `OpenAIHTTPException(501)` via `errors.not_implemented` and are not modelled here.
+`routers/synthesize.py` (rich) and `routers/audio.py` (OpenAI) are both **thin wrappers** over `synthesize_core`. The rich router passes the raw `SynthesizeRequest`; the OpenAI router maps `SpeechRequest → SynthesizeRequest` first and then strips the `X-Provider` / `X-Model` / `X-Device` / `X-Dtype` / `X-Voice-Source` / `X-Voice-Id` / `X-Chunks` / `X-Total-Duration-Ms` headers from the response so the OpenAI shape stays byte-identical (FR-OA-01..03; NFR-PT-03b paired UAT). The handlers MUST NOT import each other's internals — `tests/test_openai_adapter.py` enforces this with a static check.
 
 ## Diagram
 
 ```mermaid
 classDiagram
-    class TTSService {
-        +create_speech(request, stream) Response
-        -_resolver: SpeechRequestResolver
-        -_synthesizer: SpeechSynthesizer
-        -_response_factory: SpeechResponseFactory
+    class FastAPIApp {
+        <<FastAPI>>
+        +state: AppState
+        +lifespan
     }
 
-    class SpeechRequestResolver {
-        +resolve(request) ResolvedSpeechRequest
-        -_ensure_input_present()
-        -_resolve_target()
-        -_ensure_model_allowed()
-        -_resolve_voice()
-        -_resolve_response_format()
-        -_prepare_chunks()
+    class AppState {
+        +settings: Settings
+        +device_profile: DeviceProfile
+        +provider_selection: ProviderSelection
+        +provider_registry: TTSProviderRegistry
+        +model_registry: ModelRegistry
+        +model_cache: ModelCache
+        +model_locks: dict
+        +concurrency_semaphore: asyncio.Semaphore
+        +queue_semaphore: asyncio.Semaphore
+        +voice_metadata_repo: VoiceMetadataRepository
+        +voice_blob_repo: VoiceBlobRepository
+        +voice_seed_ingestor: VoiceSeedIngestor
+        +tts_service: TTSService
+        +ready: bool
+        +ready_reason: str
     }
 
-    class SpeechSynthesizer {
-        -_synthesis_semaphore: Semaphore
-        +generate(resolved) bytes
+    class SynthesizeRouter {
+        <<router /v1/tts/synthesize>>
+        +synthesize(payload, request)
     }
 
-    class SpeechResponseFactory {
-        +build(wav_bytes, stream) Response
-        +cleanup_temp_file(path)
+    class AudioRouter {
+        <<router /v1/audio>>
+        +create_speech(payload, request)
+        +stripped_headers = _RICH_ONLY_HEADERS
     }
 
-    class ResolvedSpeechRequest {
-        +model_name: str
-        +provider: str
-        +voice_name: str
-        +voice: VoiceConfig
-        +response_format: str
-        +chunks: list~str~
-        +normalize_db: float
+    class VoicesRouter {
+        <<router /v1/tts/voices>>
+        +list_voices(repo)
+        +create_voice(metadata, audio)
+        +get_voice(voice_id)
+        +get_voice_audio(voice_id)
+        +update_voice(voice_id, metadata, audio)
+        +delete_voice(voice_id)
     }
 
-    class STTService {
-        +create_transcription() NoReturn
-        +create_translation() NoReturn
+    class HealthRouter {
+        <<router>>
+        +health(request) dict
+        +ready(request) JSONResponse
     }
 
-    TTSService *-- SpeechRequestResolver
-    TTSService *-- SpeechSynthesizer
-    TTSService *-- SpeechResponseFactory
-    SpeechRequestResolver ..> ResolvedSpeechRequest : produces
-    SpeechSynthesizer ..> ResolvedSpeechRequest : consumes
-    SpeechSynthesizer ..> TTSProviderRegistry : looks up provider
-    SpeechSynthesizer ..> ModelRegistry : resolves
-    TTSService ..> ModelRegistry
+    class synthesize_core {
+        <<function>>
+        +synthesize_core(payload, request, settings, provider_registry, provider_selection, device_profile, metadata_repo, blob_repo) Response
+    }
+
+    class TTSProviderRegistry {
+        +get(name) TTSProviderStrategy
+        +find(name) TTSProviderStrategy
+        +all() Iterator
+        +names() list
+    }
+
+    class VoiceMetadataRepository {
+        <<Protocol>>
+    }
+
+    class VoiceBlobRepository {
+        <<Protocol>>
+    }
+
+    class VoiceSeedIngestor {
+        +ingest_once() int
+        +watch_and_ingest() None
+    }
+
+    FastAPIApp *-- AppState
+    AppState *-- VoiceSeedIngestor
+    SynthesizeRouter ..> synthesize_core : delegates
+    AudioRouter ..> synthesize_core : delegates (post-translate, post-strip)
+    VoicesRouter ..> VoiceMetadataRepository : reads/writes
+    VoicesRouter ..> VoiceBlobRepository : reads/writes
+    synthesize_core ..> TTSProviderRegistry : looks up provider
+    synthesize_core ..> VoiceMetadataRepository : reads voice
+    synthesize_core ..> VoiceBlobRepository : reads ref audio
+    VoiceSeedIngestor ..> VoiceMetadataRepository : upserts
+    VoiceSeedIngestor ..> VoiceBlobRepository : copies audio
+    HealthRouter ..> AppState : reads ready/state
 ```
 
 ## Notes
-- The provider lookup detail is in [providers.md](providers.md).
-- The end-to-end runtime sequence is in [../sequence/create-speech.md](../sequence/create-speech.md).
-- `STTService` is shown because it is wired through `get_stt_service` but currently 501s every endpoint.
+- One synthesis pipeline (BR-9). The S-017 unification removed `SpeechSynthesizer` / `SpeechRequestResolver` / `SpeechResponseFactory` from the OpenAI path; the same `_RICH_ONLY_HEADERS` constant in `routers/audio.py` lists exactly which response headers are stripped.
+- `_drain_concurrency` (in `main.py`) waits passively on the semaphore counter rather than re-acquiring (which would race with a queued waiter).
+- Schemas + error envelope: [config-and-schemas.md](config-and-schemas.md).
+- Voice-store details: [voice-store.md](voice-store.md). Provider strategy details: [providers.md](providers.md).
+- Runtime sequences: [../sequence/startup.md](../sequence/startup.md), [../sequence/synthesize-rich.md](../sequence/synthesize-rich.md), [../sequence/create-speech.md](../sequence/create-speech.md), [../sequence/voice-crud.md](../sequence/voice-crud.md), [../sequence/voice-seed-ingestion.md](../sequence/voice-seed-ingestion.md).

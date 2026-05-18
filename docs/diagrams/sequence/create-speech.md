@@ -1,26 +1,18 @@
-# TTS — Create Speech (POST /v1/audio/speech)
+# TTS — `POST /v1/audio/speech` (thin translator over `synthesize_core`)
 
 ## Purpose
-End-to-end happy path for the only fully-implemented endpoint. Captures the resolve → synthesize → respond pipeline including text preprocessing, chunked synthesis, RMS normalization and WAV concatenation.
+End-to-end path for the OpenAI-compatible endpoint. Post-S-017, `routers/audio.py::create_speech` is a thin translator: it maps `SpeechRequest → SynthesizeRequest`, delegates to the shared `synthesize_core`, then strips rich-endpoint-only response headers so the wire shape stays byte-identical to OpenAI (FR-OA-01..03; NFR-PT-03b paired UAT).
 
 ## Participants
-- `create_speech` — `routers/audio.py:22-29`
-- `TTSService.create_speech` — `services/tts_service.py:269-297`
-- `SpeechRequestResolver` — `tts_service.py:101-181`
-- `SpeechSynthesizer` — `tts_service.py:184-216`
-- `SpeechResponseFactory` — `tts_service.py:219-241`
-- `text_preprocessing.preprocess_for_tts`, `split_text_semantic` — `services/text_preprocessing.py`
-- `audio_postprocessing.normalize_wav_rms` — `services/audio_postprocessing.py:17-65`
-- Provider strategy — see [provider-mlx-audio.md](provider-mlx-audio.md) and siblings
+- `create_speech` — `src/llm_tts_api/routers/audio.py`
+- `_translate_openai_request` — `routers/audio.py`
+- `_RICH_ONLY_HEADERS` — `routers/audio.py:51-62`
+- `synthesize_core` — `src/llm_tts_api/services/synthesize_service.py`
 
 ## Narrative
-The router receives a `SpeechRequest` and a `stream` query flag. `TTSService.create_speech` runs in three phases:
+The router receives a `SpeechRequest` and a `?stream=` query flag. `_translate_openai_request` maps the OpenAI field set onto the rich `SynthesizeRequest` (`model → model`, `input → input`, `voice → voice`, `provider → provider`, `response_format → response_format`, `normalize_db → normalize_db`, etc.). The translated payload is handed to `synthesize_core`, which runs the same pipeline that backs the rich endpoint (validation → voice lookup → preprocessing → chunking → provider synthesis → RMS normalize → optional stream/buffer). On return, the handler removes every header in `_RICH_ONLY_HEADERS` (`X-Provider`, `X-Model`, `X-Device`, `X-Dtype`, `X-Voice-Source`, `X-Voice-Id`, `X-Chunks`, `X-Total-Duration-Ms`) so the response shape matches OpenAI's wire contract.
 
-1. **Resolve.** The resolver validates `input` non-empty, resolves `(model, provider)` via `ModelRegistry.resolve_tts_target`, asserts the model is in that provider's allow-list, looks up the `VoiceConfig`, confirms the reference audio exists, locks the response format to `wav`, then preprocesses (`preprocess_for_tts` → punctuation cleanup, date expansion, number expansion) and chunks the text (`split_text_semantic`). Output: `ResolvedSpeechRequest`.
-2. **Synthesize.** The synthesizer acquires a class-level semaphore (`tts_max_concurrent_requests`), pulls the provider out of the registry, calls `synthesize_chunks(SynthesisRequest)`, runs each chunk through `normalize_wav_rms(target_db=voice.target_db)`, and concatenates the WAV byte-strings.
-3. **Respond.** `SpeechResponseFactory.build` either streams the bytes back or writes to a temp file with `BackgroundTask(cleanup_temp_file)`.
-
-Validation errors raise `OpenAIHTTPException(400)`; provider errors propagate as `OpenAIHTTPException(500)`.
+`tests/test_openai_adapter.py` pins this with a static check that the OpenAI handler does NOT import `SpeechSynthesizer` or `routers.synthesize` internals, and `tests/test_openai_adapter_parity.py::test_paired_byte_identity_strict` asserts that an OpenAI request and the equivalent rich request produce byte-identical audio (RISK-8 relaxation contract pinned in `docs/perf/baseline.md`).
 
 ## Diagram
 
@@ -28,69 +20,36 @@ Validation errors raise `OpenAIHTTPException(400)`; provider errors propagate as
 sequenceDiagram
     autonumber
     participant Client
-    participant Router as routers/audio
-    participant TTS as TTSService
-    participant Res as SpeechRequestResolver
-    participant MR as ModelRegistry
-    participant TP as text_preprocessing
-    participant Syn as SpeechSynthesizer
+    participant R as routers/audio
+    participant Core as synthesize_core
     participant Reg as TTSProviderRegistry
     participant Prov as Provider
-    participant AP as audio_postprocessing
-    participant Fac as SpeechResponseFactory
+    participant Repo as voice_metadata_repo
+    participant Blob as voice_blob_repo
+    participant Resp as Response
 
-    Client->>Router: POST /v1/audio/speech (SpeechRequest, ?stream=)
-    Router->>TTS: create_speech(request, stream)
-
-    rect rgb(245,245,255)
-        Note over TTS,Res: Phase 1 — Resolve
-        TTS->>Res: resolve(request)
-        Res->>Res: _ensure_input_present()
-        Res->>MR: resolve_tts_target(model, provider)
-        MR-->>Res: (model_name, provider)
-        Res->>Res: _ensure_model_allowed()
-        Res->>Res: _resolve_voice() (VoiceConfig + ref file exists)
-        Res->>Res: _resolve_response_format() → "wav"
-        Res->>TP: preprocess_for_tts(text, lang)
-        TP-->>Res: normalized text
-        Res->>TP: split_text_semantic(normalized, ...)
-        TP-->>Res: chunks
-        Res-->>TTS: ResolvedSpeechRequest
+    Client->>R: POST /v1/audio/speech (SpeechRequest, ?stream=)
+    R->>R: _translate_openai_request(req, stream) → SynthesizeRequest
+    R->>Core: synthesize_core(payload, request, settings, registry, selection, profile, metadata_repo, blob_repo)
+    Core->>Repo: get(voice_id)
+    Repo-->>Core: VoiceRecord
+    Core->>Blob: get(voice_id) (resolve ref-audio bytes)
+    Blob-->>Core: bytes
+    Core->>Core: preprocess_for_tts + split_text_semantic
+    Core->>Reg: get(provider_name)
+    Reg-->>Core: TTSProviderStrategy
+    loop for each chunk
+        Core->>Prov: synthesize_chunks(SynthesisRequest)
+        Prov-->>Core: list[wav_bytes]
     end
-
-    rect rgb(245,255,245)
-        Note over TTS,AP: Phase 2 — Synthesize (semaphore-bounded)
-        TTS->>Syn: generate(resolved)
-        Syn->>Syn: acquire _synthesis_semaphore
-        Syn->>Reg: get(resolved.provider)
-        Reg-->>Syn: provider strategy
-        Syn->>Prov: synthesize_chunks(SynthesisRequest)
-        Prov-->>Syn: list[wav_bytes]
-        loop for each chunk
-            Syn->>AP: normalize_wav_rms(chunk, target_db)
-            AP-->>Syn: normalized_chunk
-        end
-        Syn->>Syn: _concat_wav_bytes(chunks)
-        Syn->>Syn: release semaphore
-        Syn-->>TTS: wav_bytes
-    end
-
-    rect rgb(255,250,240)
-        Note over TTS,Fac: Phase 3 — Respond
-        TTS->>Fac: build(wav_bytes, stream)
-        alt stream=true
-            Fac-->>TTS: StreamingResponse(BytesIO)
-        else stream=false
-            Fac->>Fac: tempfile.mkstemp(); write
-            Fac-->>TTS: FileResponse(+ BackgroundTask cleanup)
-        end
-    end
-
-    TTS-->>Router: Response
-    Router-->>Client: 200 audio/wav
+    Core->>Core: normalize_wav_rms per chunk + concat
+    Core-->>Resp: Response(audio/wav, headers={X-Request-ID, X-Provider, X-Model, X-Device, X-Dtype, X-Voice-Source, X-Voice-Id, X-Chunks, X-Total-Duration-Ms})
+    Resp-->>R: rich response
+    R->>R: drop headers in _RICH_ONLY_HEADERS
+    R-->>Client: 200 audio/wav (OpenAI-shaped: only X-Request-ID survives)
 ```
 
 ## Notes
-- Error envelope follows OpenAI shape; all `OpenAIHTTPException` instances serialize as `{"error": {...}}`.
-- Concurrency cap is `Settings.tts_max_concurrent_requests` (default 1) — beyond that, requests await the semaphore.
-- Streaming returns the full WAV in one chunk; this is not progressive synthesis.
+- The OpenAI handler MUST NOT import `SpeechSynthesizer` or `routers.synthesize` — UAT-OA-03 enforces this with a static check.
+- See [synthesize-rich.md](synthesize-rich.md) for the rich-endpoint variant of the same pipeline (where the headers are kept and streaming is exercised).
+- The byte-identity invariant is pinned by `tests/test_openai_adapter_parity.py` (strict path on the deterministic in-process FakeTTSProvider; relaxed path pinned in `docs/perf/baseline.md` for non-deterministic providers).
