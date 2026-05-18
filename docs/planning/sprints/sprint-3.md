@@ -71,7 +71,7 @@ Sprint 3 proves itself when:
 ### S-022 — Voice repository protocols + FS default
 
 **Type:** Technical
-**Status:** PLANNED
+**Status:** DONE
 **Depends on:** S-003 (DONE), S-012 (DONE)
 **Refs:** FR-VS-01..04, FR-VS-10..11, NFR-SE-03, NFR-ST-01, NFR-ST-03, NFR-PV-01, NFR-PV-05
 **Why selected:** Foundation for the entire voice store; every other Sprint 3 story consumes its Protocols.

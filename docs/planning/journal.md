@@ -259,7 +259,7 @@ Group E (cross-cutting polish, late)
 
 #### S-022: Voice repository protocols + default FS backends
 **Type:** Technical
-**Status:** PLANNED (Sprint 3)
+**Status:** DONE (Sprint 3)
 **Depends on:** S-003, S-012
 **Parallel group:** B
 **Refs:** FR-VS-01..04, FR-VS-10..11, NFR-SE-03, NFR-ST-01, NFR-ST-03, NFR-PV-01, NFR-PV-05
