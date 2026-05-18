@@ -144,7 +144,16 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
         provider_name="mlx_audio", device="cpu", source="auto"
     )
     app_state.model_registry = ModelRegistry(settings)  # type: ignore[attr-defined]
-    app_state.provider_registry = TTSProviderRegistry(providers=[])  # type: ignore[attr-defined]
+    # S-013 — register a typed fake provider keyed as ``mlx_audio`` so the
+    # rich endpoint (which dispatches through ``provider_registry.get(...)``)
+    # can run without a real model load. Existing audio-router tests inject
+    # their own provider via monkeypatch on the real lifespan path, so this
+    # stub does not interfere with them.
+    from tests.fakes.fake_tts_provider import FakeTTSProvider
+
+    app_state.provider_registry = TTSProviderRegistry(  # type: ignore[attr-defined]
+        providers=[FakeTTSProvider(provider_name="mlx_audio")]
+    )
     app_state.model_cache = LRUModelCache(max_size=1)  # type: ignore[attr-defined]
     app_state.tts_service = fake_tts  # type: ignore[attr-defined]
     app_state.stt_service = STTService()  # type: ignore[attr-defined]
