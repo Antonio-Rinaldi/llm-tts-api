@@ -8,6 +8,19 @@ Tracks sprints planned and their disposition.
 | 2 | Core services — async concurrency, model cache, error taxonomy, lifecycle | S-006, S-007, S-008, S-009, S-010, S-012 | DONE | 2026-05-17 | 2026-05-17 | 2026-05-18 |
 | 3 | Voice store — repositories, optional backends, CRUD, seed ingestion | S-022, S-023, S-024, S-025, S-011 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
 | 4 | Rich endpoint surface — synthesize + streaming + cancellation | S-013, S-015, S-016 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
+| 5 | OpenAI adapter + byte-identity equivalence | S-017, S-018 | PLANNED | 2026-05-18 | — | — |
+
+## Sprint 5 — summary
+
+**Objective:** reduce `POST /v1/audio/speech` to a thin OpenAI-shaped translator over the Sprint-4 rich endpoint and prove the translation is byte-faithful on a warm model. Collapses the dual synthesis pipeline (BR-9) and unblocks Sprint 6 polish.
+
+**Composition:** 2 stories, 2 execution steps (strictly serial). Step 1: S-017 alone (adapter — producer of the translation contract). Step 2: S-018 alone (paired UAT — consumer of that contract). Service-boundary rule forces the split.
+
+**Provability:** OpenAI request/response shape unchanged (UAT-OA-01..04); handler stays ≤30 LOC of translation with no `SpeechSynthesizer` bypass; paired sha256 byte-identity holds for at least one warm provider/model (UAT-OA-05) with documented RISK-8 relaxation fallback.
+
+**Risks:** RISK-8 (provider non-determinism) — relaxation path baked into S-018 T3; OpenAI-contract leakage of rich-endpoint headers — explicit T3 strip + test in S-017; adapter LOC creep — AST/grep gate.
+
+**Detail:** `docs/planning/sprints/sprint-5.md`.
 
 ## Sprint 4 — summary
 

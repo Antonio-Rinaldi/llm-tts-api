@@ -378,6 +378,7 @@ Group E (cross-cutting polish, late)
 
 #### S-017: OpenAI adapter as thin translator
 **Type:** User
+**Status:** PLANNED (Sprint 5)
 **Depends on:** S-013
 **Parallel group:** D
 **Refs:** FR-OA-01..04, NFR-PT-03, BR-9
@@ -392,6 +393,7 @@ Group E (cross-cutting polish, late)
 
 #### S-018: Byte-identity paired UAT (rich vs OpenAI)
 **Type:** Technical
+**Status:** PLANNED (Sprint 5)
 **Depends on:** S-013, S-017
 **Parallel group:** D
 **Refs:** NFR-PT-03b (SRS §5 Resolution G-1), RISK-8
