@@ -12,7 +12,7 @@ completes in its isolated worktree. Companion to `sprint-6.md`.
 | S-021 | Technical | READY-FOR-REVIEW | sprint-6-S-021 (merged) |
 | S-026 | Technical | READY-FOR-REVIEW | sprint-6-S-026 (merged) |
 
-Sprint 6 status: All stories READY-FOR-REVIEW; pending story + sprint reviews.
+Sprint 6 status: Complete — reviewed.
 
 ---
 
@@ -1082,4 +1082,202 @@ review protocol. Coherence fix landed in-worktree (`ab1a4f0`); ready for
 coordinator merge.
 
 ---
+
+
+---
+
+# Sprint 6 — Sprint-level review (Phase 1P, cross-story coherence)
+
+**Sprint:** 6 (cycle close-out — docs / container / perf / dedup)
+**Reviewer:** Claude (Opus 4.7), sprint-level (cross-story) pass
+**Date:** 2026-05-19
+**Baseline at review start:** `380 passed, 2 skipped, 3 deselected, 1 xfailed`
+in 6.36 s; `mypy --strict` clean across 52 source files — re-confirmed in the
+isolated review worktree.
+
+## Verdict
+
+**APPROVED.** Sprint 6 closes the improvement cycle as a coherent unit. The
+four stories (S-019 docs, S-020 container, S-021 perf, S-026 dedup) modify
+disjoint surfaces in Step 1 and then S-026 lands as a behaviour-preserving
+terminal step that respects all three Step-1 contracts. No cross-story
+regressions found. The two coherence drifts that did surface (a stale
+line-range citation, and a comment naming a symbol that was deliberately
+not created) were already caught and fixed at the story-review level (commits
+`4a7eb8b` and `ab1a4f0`); the sprint-level pass re-verifies that those
+fixes hold against current `master` (sprint-6) and nothing else slipped.
+
+No commits made by this sprint-level pass.
+
+---
+
+## Cross-story coherence checks
+
+### 1. Shared infrastructure — do the four stories cohere with each other and with Sprints 1–5?
+
+| Pair / boundary | Mechanism | Result |
+|---|---|---|
+| S-019 (docs) ↔ S-026 (dedup, terminal) — *the highest-risk boundary in this sprint* | (i) `tests/test_docs_inventory.py` (S-019 T5) walks `Settings` env-vars + `errors.ERROR_CODES` + router prefixes and asserts each is in README/OpenAPI. S-026 added one `errors.py` helper (`raise_not_implemented`) and one kwarg (`invalid_request(..., status_code=...)`), neither of which extends `ERROR_CODES`, introduces a new env var, or adds a route. (ii) S-026 explicitly preserves `docs/openapi/openapi.yaml` byte-identically. | **Pass.** Inventory test still green; OpenAPI diff against `master` is empty. |
+| S-019 (docs) ↔ S-026 — header inventory | S-019's README §"Response headers" enumerates 9 keys (`X-Request-ID` + the 8-key rich set). S-026 T2 consolidated the populating site (`_synthesis_headers` in `synthesize_service.py`) and the strip site (`_RICH_ONLY_HEADERS` frozenset in `routers/audio.py`). Both sets agree key-for-key (X-Provider, X-Model, X-Device, X-Dtype, X-Voice-Source, X-Voice-Id, X-Chunks, X-Total-Duration-Ms) and the README table matches. | **Pass.** README ↔ `_synthesis_headers` ↔ `_RICH_ONLY_HEADERS` all in lockstep. |
+| S-019 (docs) ↔ S-020 (container) | README §"Quick start" cites the `Dockerfile` / `Dockerfile.cuda` pair and the `provider_error.no_viable_provider` startup path; S-020 supplies both and wires the same NFR-OP-02 env-var inventory. | **Pass.** No doc drift; the docker compose example in README aligns with the volume layout S-020 declares (`/var/lib/llm-tts-api/voices`, `/app/config`). |
+| S-019 (docs) ↔ S-021 (perf) | README §"Performance" links `docs/perf/baseline.md`; S-021 owns that file and split it into Sprint-1 anchor / Sprint-6 post-cycle subsections. No README claim hard-codes a perf number, so the operator-pending rows in `baseline.md` do not falsify the README. | **Pass.** |
+| S-020 (container) ↔ S-021 (perf) | `scripts/perf_baseline.py` defaults to `http://127.0.0.1:8010`, matching the container's `EXPOSE 8010`. The CUDA smoke job overrides `TTS_DEVICE=cpu` because the GitHub runner has no GPU — orthogonal to S-021's path. | **Pass.** Same ABI; no contention. |
+| S-020 (container) ↔ S-026 (dedup) | S-020 added no source files (only `Dockerfile*`, `.dockerignore`, `.github/workflows/docker.yml`); S-026's refactor cannot regress the container path because the entrypoint (`tini -- uvicorn …`) ends up at the same `_drain_concurrency` handler in `main.py`. No new env vars introduced by S-026 means the container's env-var defaults stay complete. | **Pass.** |
+| S-021 (perf) ↔ S-026 (dedup) | S-026 added two pure-constructor helpers on the hot path (`_synthesis_headers`, `_build_synthesis_request`). Both are called per-chunk; both return a freshly allocated dict/object identical to the inline form previously used. No I/O, no allocations beyond what existed, no new locks. S-021's in-suite smoke (`test_perf_regression.py::test_concurrent_throughput_within_band`) still passes within the 0.8×/2.5× band post-refactor. | **Pass.** |
+| Sprint 6 ↔ Sprints 1–5 cycle invariants | Sprint-1 `synthesize_core` contract (S-017), Sprint-2 streaming + trailers (S-015), Sprint-3 voice store (FR-VS-01..12), Sprint-4 cancellation (S-016), Sprint-5 paired byte-identity UAT (S-018) — none of the 4 Sprint-6 stories modifies a public surface that any of these gates depend on. The S-018 paired UAT (`tests/test_openai_adapter_parity.py`) is byte-identical to its merged form — verified empty diff against `master`. | **Pass.** |
+
+### 2. Integration boundaries — does S-019's README inventory test still pass after S-026's refactor?
+
+S-019 T5 ships three asserts:
+
+1. **Env-var ↔ README.** S-026 changed `errors.py` (added `raise_not_implemented`, added `status_code` kwarg to `invalid_request`) and `synthesize_service.py` (added two private helpers). Neither path goes through `Settings.__post_init__` / `os.environ.get`. The AST walker discovers the same 32 env-var names pre- and post-S-026. README lists all 32. **Pass.**
+2. **Error-taxonomy ↔ README.** `ERROR_CODES` is unchanged by S-026 — `raise_not_implemented` reuses the existing `not_implemented` factory (already a `(validation_error, not_implemented)` entry); the `voice_id_exists` site moved from raw construction to `invalid_request(..., status_code=409)` but it is still a `validation_error/voice_id_exists` pair, which was already in `ERROR_CODES`. README lists all 5 types × all codes. **Pass.**
+3. **Routes ↔ OpenAPI.** S-026 added no routes (OpenAPI is byte-identical). `app.routes` set is unchanged. **Pass.**
+
+The inventory test was an explicit Sprint-6 risk-row guard ("README inventory test in S-019 catches new env vars from S-026 if any are introduced"). The test fires; nothing was introduced.
+
+### 3. Behavioral interactions — does S-026's `_synthesis_headers` / `_build_synthesis_request` consolidation interact correctly with S-019's documented header inventory? Does the new `tests/fakes/seed_voice.py` reach all consumers?
+
+**Header consolidation.** Verified at the byte level:
+
+- `_synthesis_headers` (called twice in `synthesize_core` — streaming at line 441, buffered at line 487) produces a dict whose keys are `{X-Request-ID, X-Provider, X-Model, X-Device, X-Dtype, X-Voice-Source, X-Voice-Id}` plus conditional `{X-Chunks, X-Total-Duration-Ms}` when `chunks` / `duration_ms` are not None — matches README §"Response headers" row-for-row.
+- `_RICH_ONLY_HEADERS` (the strip-list in `routers/audio.py:58`) excludes `X-Request-ID` (preserved on the OpenAI path for correlation) and lists exactly the 8 rich-only keys produced by `_synthesis_headers`. The two are kept in sync by the S-018 paired UAT (`tests/test_openai_adapter_parity.py`), which compares response bodies and header sets byte-for-byte across the two endpoints — diff against `master` empty, test green.
+- The comment block at `routers/audio.py:49-57` correctly explains why this is two-source-by-design (UAT-OA-03 import pin) and points the next reader at the safety net. This is the comment that was corrected in `ab1a4f0`; the fix is in place on the current branch.
+
+**Seed-voice fixture consumption.** Verified by grep across `tests/`:
+
+- `tests/fakes/seed_voice.py` is imported as `from tests.fakes.seed_voice import seed_voice as _seed_voice` in **2** non-frozen test modules: `tests/test_synthesize.py:22` and `tests/test_openai_adapter.py:34`. Both modules deleted their local copies and the now-unused `io` / `wave` / `VoiceRecord` imports per impl notes.
+- `tests/test_openai_adapter_parity.py` is the frozen consumer — by S-018 cycle invariant it MUST NOT be touched, and its local `_seed_voice` copy is intentionally preserved. Diff vs `master` empty.
+- The defaults in `seed_voice(...)` (`target_db=-20.0`, `max_sentences_per_chunk=2`) match `VoiceRecord` field defaults, so callers that previously did not pass these knobs observe an identical record. Behaviour-preserving.
+
+This was one of the items the user prompt flagged for explicit verification ("Does the new `tests/fakes/seed_voice.py` reach all consumers?"). It does — two of three, and the third (parity) is the correct exclusion documented in the cycle gate.
+
+### 4. Regression risk — across Sprints 1–6, is there any drift between docs and code?
+
+Three structured checks:
+
+| Check | Mechanism | Result |
+|---|---|---|
+| Env-var drift | `tests/test_docs_inventory.py::test_every_settings_env_var_appears_in_readme` runs in the unit suite on every commit. Failure mode is loud. | **Clean** — 32 names, all present. |
+| Error-code drift | `tests/test_docs_inventory.py::test_every_error_taxonomy_pair_appears_in_readme` imports `ERROR_CODES` and asserts each `(type, code)` is in README. | **Clean** — 5 types, all codes present. |
+| Route drift | `tests/test_docs_inventory.py::test_every_router_prefix_appears_in_openapi` walks `app.routes` and confirms each path is in `openapi.yaml`. | **Clean** — 23 paths each side. |
+
+Manual cross-check of the items most exposed to cycle-wide drift:
+
+- **Hardware auto-selection (S-005, S-006).** README §"Hardware Auto-Detection" capability matrix matches `ProviderStrategy.supports_devices` enumerations in code. The `provider_error.no_viable_provider` startup path cited in both README and S-020 `Dockerfile.cuda` impl notes is the same `select_provider` failure branch.
+- **Streaming + trailers (S-015).** README §"Streaming negotiates HTTP trailing headers" describes the `TE: trailers` negotiation that `_TrailerStreamingResponse` actually implements. S-019 `synthesize-rich.md` sequence diagram matches.
+- **Voice CRUD (S-025).** README §"Voice CRUD endpoints" describes multipart + magic-bytes validation + consent attestation; `routers/voices.py` implements exactly that. S-019 `voice-crud.md` sequence diagram matches.
+- **Seed ingestion (S-011).** README §"Seed voice ingestion" describes the watchfiles ≤ 2 s reload + polling fallback knob; `services/voice_store/seed_ingestion.py` matches. S-019 `voice-seed-ingestion.md` sequence diagram matches.
+- **OpenAI adapter as thin translator (S-017).** README §"OpenAI-compatible endpoint" describes `_translate_openai_request` → `synthesize_core` → strip rich-only headers; `routers/audio.py` implements exactly that. S-019 `create-speech.md` sequence diagram matches (post the `4a7eb8b` line-range fix).
+- **Lifespan + drain (S-010).** README + S-019 `startup.md` and `health-and-ready.md` diagrams describe `_drain_concurrency` invoked on shutdown; `main.py:78` implements it. S-020 entrypoint (`tini -- uvicorn …`) preserves the SIGTERM path that drives it.
+- **Cancellation (S-016).** README §"Per-chunk cancellation" describes the disconnect probe at the per-chunk boundary; `routers/synthesize.py:368-381` implements it. No drift.
+- **Byte-identity paired UAT (S-018).** `tests/test_openai_adapter_parity.py` is byte-identical to `master`. No drift.
+
+No cycle-wide doc/code drift found.
+
+---
+
+## Sprint-6 invariants — status across all four stories
+
+| Invariant | S-019 | S-020 | S-021 | S-026 |
+|---|---|---|---|---|
+| Behavior-preserving (S-026 quiescent surface for terminal refactor) | ✅ docs only | ✅ infra only | ✅ new test only | ✅ refactor + 380 passed unchanged |
+| No doc drift | ✅ (own deliverable) | ✅ no doc edits | ✅ owned `baseline.md` only | ✅ OpenAPI byte-identical |
+| No startup regression | ✅ no `main.py` | ✅ `tini -- uvicorn` preserves drain | ✅ no `main.py` | ✅ no `main.py` |
+| No perf regression | ✅ no hot path | ✅ no src/ | ✅ adds smoke, doesn't tighten | ✅ two zero-cost helper indirections |
+| S-018 paired UAT untouched | ✅ | ✅ | ✅ | ✅ verified `git diff` empty |
+| LOC / gates | ✅ +3 tests | ✅ no src/ | ✅ +2 tests | ✅ +13 LOC documented as "as-found" per plan risk row |
+
+---
+
+## Acceptance-criteria roll-up (sprint-6 §S-019..§S-026)
+
+| Story | All criteria met? | Notes |
+|---|---|---|
+| S-019 | ✅ | README has all sections incl. verbatim biometric notice; class + sequence diagrams refreshed; OpenAPI covers rich / voices / OpenAI / models / health / ready; inventory test green (3 asserts). |
+| S-020 | ⚠ first-CI-run gated | Dockerfile pair + .dockerignore + workflow merged. `docker build` was NOT exercised locally (no Docker daemon on the impl host); CI is the gate (UAT-QG-05). First green workflow run is the formal acceptance; absent that, the criteria are *deliverable-complete but not CI-verified*. Flagged for the human reviewer below. |
+| S-021 | ⚠ operator capture pending | Methodology + script flag + in-suite smoke + doc structure all landed. Absolute numbers in `docs/perf/baseline.md` remain `_pending_` for both Sprint-1 anchor and Sprint-6 post-cycle rows. The sprint-6 plan §7 explicitly anticipated this and made S-021 *inherit the obligation rather than block on it* — but the +10% regression verdict cannot be computed until the operator captures. Flagged for the human reviewer below. |
+| S-026 | ⚠ LOC target documented as "as-found" | Net +13 LOC vs the 3% reduction target. Plan §7 risk row explicitly permits this outcome when the codebase is already lean (S-014 had already consolidated voice-id validation; S-005/S-012 had already consolidated the allow-list accessor). Maintainability win (single edit site per consolidation) is real. All other gates green; behaviour-preserving. |
+
+The three ⚠ items are not coherence problems — they are documented operator-facing obligations that survive the sprint as-planned. Calling them out so the human reviewer can decide whether to ship the cycle with them outstanding or block on capture.
+
+---
+
+## Coherence fixes already in place (story-level reviews)
+
+Two cross-story drifts surfaced at the story-review level and are already fixed on the integration branch. The sprint-level pass re-verifies both fixes hold against the current tip:
+
+1. **`docs/diagrams/sequence/create-speech.md`** — citation `_RICH_ONLY_HEADERS — routers/audio.py:51-62` was correct at S-019's merge but falsified after S-026's `audio.py` comment block shifted the literal to L58. **Fixed in `4a7eb8b`**: dropped the brittle line-range; symbol name is uniquely greppable. **Re-verified:** the diagram now reads `_RICH_ONLY_HEADERS — routers/audio.py`, and `grep -n _RICH_ONLY_HEADERS src/llm_tts_api/routers/audio.py` shows the literal at L58.
+2. **`src/llm_tts_api/routers/audio.py`** comment block referenced a symbol `synthesize_service._RICH_ONLY_HEADER_KEYS` that was never created (the pre-back-out plan; the impl notes T2 explain why creating it would have failed the UAT-OA-03 static import pin). **Fixed in `ab1a4f0`**: comment now points at the actual safety net (`tests/test_openai_adapter_parity.py`) and the actual upstream producer (`synthesize_service._synthesis_headers`). **Re-verified:** comment at L49-57 matches reality; symbol `_synthesis_headers` exists at `synthesize_service.py:90`.
+
+Both fixes are comment / doc-only — no behaviour changed, no gates re-run needed beyond confirming the baseline (`380 passed`).
+
+---
+
+## Human review checklist — sprint-level concerns
+
+The four story-level reviews each carry their own per-story checklist; this section calls out only what cannot be answered without taking the whole sprint together:
+
+- [ ] **CI Docker workflow first run.** S-020 acceptance is CI-gated by the human reviewer's promise to confirm the first run of `.github/workflows/docker.yml` is green for both `build-default` and `build-cuda` legs, with the image-size record line captured in the PR description. Until that first green run, the cycle's container deliverable is *staged* rather than *verified*.
+- [ ] **Operator perf capture decision.** S-021 ships the methodology, the smoke, and the doc structure; the `_pending_` rows in `docs/perf/baseline.md` remain a deferred operator task. **Decide before merge:** ship the cycle with `_pending_` rows (and capture as a follow-up), or block S-026's merge to `master` on operator capture so the +10% regression verdict can be computed inside the cycle window.
+- [ ] **LOC outcome ratification.** S-026 documents +13 LOC (vs the -3% target) as "as-found" per the sprint-6 plan risk row. Confirm the human reviewer accepts that ratification language; if they want a tighter outcome, the candidate is to re-tackle (e) `_seed_voice` in `test_openai_adapter_parity.py` — but that file is S-018-frozen, so the only path is a separate "lift S-018 freeze" story, well out of cycle scope.
+- [ ] **Cycle-close meta-decision.** Sprint 6 was sold in §2 as "the last sprint of the cycle — anything not landed here ships rough." Reviewer should confirm: with the three ⚠ items above outstanding, is the cycle's defensibility intact? My read: yes — the docs are exhaustive, the container is buildable+smokable, the perf methodology is locked even with absolute numbers pending, and the codebase is verifiably lean (S-014/S-005/S-012 having already eaten the big consolidations). The cycle exit is honest about what is and isn't measured.
+- [ ] **Spot-check rendering.** Mermaid diagrams, README markdown tables, and the biometric-notice blockquote are not lint-covered. Confirm visual render on at least one Markdown previewer before merge. The S-019 story review listed the specific surfaces.
+
+---
+
+## Test guidance (sprint-level)
+
+Beyond each story's own gate set, the load-bearing sprint-level checks are:
+
+```bash
+# Cycle-wide doc-code drift (S-019 T5; the cross-story regression net)
+uv run pytest tests/test_docs_inventory.py -v
+#   → 3 passed (env vars, error taxonomy, router prefixes)
+
+# Behavior preservation through the cycle terminal step (S-018 + suite)
+uv run pytest -q
+#   → 380 passed, 2 skipped, 3 deselected, 1 xfailed
+
+# Byte-identity of the two surfaces S-026 promised not to touch
+diff <(git show master:docs/openapi/openapi.yaml) docs/openapi/openapi.yaml
+diff <(git show master:tests/test_openai_adapter_parity.py) tests/test_openai_adapter_parity.py
+#   → both empty
+
+# Static gates
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy --strict src/        # → no issues, 52 source files
+uv run pip-audit
+```
+
+For operator absolute-perf capture (the deferred S-021 item), the commands
+are documented inline in `docs/perf/baseline.md` and in the S-021 story
+review §"Test guidance".
+
+---
+
+## Files in scope for the sprint-level pass (no changes made)
+
+Reviewed but not modified:
+
+- `src/llm_tts_api/services/synthesize_service.py` (S-026 helpers `_synthesis_headers`, `_build_synthesis_request`)
+- `src/llm_tts_api/routers/audio.py` (S-026 `_RICH_ONLY_HEADERS` + corrected comment)
+- `src/llm_tts_api/errors.py` (S-026 `status_code` kwarg, `raise_not_implemented` helper)
+- `tests/fakes/seed_voice.py` (S-026 T6) + consumers in `test_synthesize.py`, `test_openai_adapter.py`
+- `tests/test_docs_inventory.py` (S-019 T5 — the cycle's load-bearing drift net)
+- `README.md` §"Response headers" (S-019 T1 — cross-checked against `_synthesis_headers` + `_RICH_ONLY_HEADERS`)
+- `docs/openapi/openapi.yaml` (S-019 T4 — byte-identical against `master` per S-026 gate)
+- `docs/perf/baseline.md` (S-021 T5 — operator-pending rows acknowledged)
+- `docs/diagrams/sequence/create-speech.md` (post `4a7eb8b` line-range fix)
+- `Dockerfile`, `Dockerfile.cuda`, `.dockerignore`, `.github/workflows/docker.yml` (S-020)
+
+---
+
+**Recommendation:** Approve Sprint 6 for cycle close. The three ⚠ items
+(CI first-run, operator perf capture, LOC outcome) are sprint-plan-anticipated
+obligations, not coherence regressions. Once the human reviewer ratifies
+the cycle-close meta-decision above, the cycle exits clean.
+
+— end of Sprint 6 sprint-level review —
 

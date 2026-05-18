@@ -9,7 +9,7 @@ Tracks sprints planned and their disposition.
 | 3 | Voice store — repositories, optional backends, CRUD, seed ingestion | S-022, S-023, S-024, S-025, S-011 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
 | 4 | Rich endpoint surface — synthesize + streaming + cancellation | S-013, S-015, S-016 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
 | 5 | OpenAI adapter + byte-identity equivalence | S-017, S-018 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-19 |
-| 6 | Cycle close-out — docs, container, perf validation, dedup | S-019, S-020, S-021, S-026 | PLANNED | 2026-05-19 | — | — |
+| 6 | Cycle close-out — docs, container, perf validation, dedup | S-019, S-020, S-021, S-026 | READY-FOR-REVIEW | 2026-05-19 | 2026-05-19 | — |
 
 ## Sprint 6 — summary
 
