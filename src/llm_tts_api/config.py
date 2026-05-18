@@ -8,6 +8,7 @@ from pathlib import Path
 _VALID_DEVICES: frozenset[str] = frozenset({"auto", "mps", "cuda", "cpu"})
 _VALID_DTYPES: frozenset[str] = frozenset({"auto", "float16", "bfloat16", "float32"})
 _VALID_LOG_FORMATS: frozenset[str] = frozenset({"text", "json"})
+_VALID_VOICE_METADATA_BACKENDS: frozenset[str] = frozenset({"fs_json", "postgres"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +93,12 @@ class Settings:
     # ``FsBlobRepository`` (``blobs/<id>.wav``) live underneath it.
     tts_voice_store_dir: Path = field(default_factory=lambda: Path("var/voices"))
 
+    # S-023 — optional Postgres metadata backend behind the ``[postgres]``
+    # extra. ``fs_json`` keeps the default deploy zero-external-services;
+    # ``postgres`` requires ``TTS_VOICE_METADATA_DSN`` and the extra.
+    tts_voice_metadata_backend: str = "fs_json"
+    tts_voice_metadata_dsn: str | None = None
+
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
         self._load_app_identity()
@@ -100,12 +107,26 @@ class Settings:
         self._load_tts_limits()
         self._load_runtime_knobs()
         self._load_voice_store_dir()
+        self._load_voice_metadata_backend()
         self.tts_voice_map = self._load_voice_map_from_file()
 
     def _load_voice_store_dir(self) -> None:
         """Resolve ``TTS_VOICE_STORE_DIR`` (default ``var/voices/``)."""
         raw = os.environ.get("TTS_VOICE_STORE_DIR", "").strip()
         self.tts_voice_store_dir = Path(raw) if raw else Path("var/voices")
+
+    def _load_voice_metadata_backend(self) -> None:
+        """Resolve ``TTS_VOICE_METADATA_BACKEND`` (default ``fs_json``)."""
+        raw = os.environ.get("TTS_VOICE_METADATA_BACKEND", "").strip().lower()
+        backend = raw or "fs_json"
+        if backend not in _VALID_VOICE_METADATA_BACKENDS:
+            raise ValueError(
+                f"TTS_VOICE_METADATA_BACKEND={backend!r} is not valid "
+                f"(expected one of: {', '.join(sorted(_VALID_VOICE_METADATA_BACKENDS))})"
+            )
+        self.tts_voice_metadata_backend = backend
+        dsn = os.environ.get("TTS_VOICE_METADATA_DSN", "").strip()
+        self.tts_voice_metadata_dsn = dsn or None
 
     @staticmethod
     def _split_csv(raw: str) -> list[str]:
