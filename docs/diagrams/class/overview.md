@@ -41,6 +41,8 @@ classDiagram
         +voice_metadata_repo: VoiceMetadataRepository
         +voice_blob_repo: VoiceBlobRepository
         +voice_seed_ingestor: VoiceSeedIngestor
+        +preset_registry: PresetRegistry
+        +preset_registry_reloader: PresetRegistryReloader
         +tts_service: TTSService
         +ready: bool
         +ready_reason: str
@@ -75,7 +77,18 @@ classDiagram
 
     class synthesize_core {
         <<function>>
-        +synthesize_core(payload, request, settings, provider_registry, provider_selection, device_profile, metadata_repo, blob_repo) Response
+        +synthesize_core(payload, request, settings, provider_registry, provider_selection, device_profile, metadata_repo, blob_repo, preset_snapshot) Response
+    }
+
+    class PresetRegistry {
+        <<dataclass frozen>>
+        +get(name) PresetEntry|None
+        +names() frozenset
+    }
+
+    class PresetRegistryReloader {
+        +watch() None
+        +reload_once() None
     }
 
     class TTSProviderRegistry {
@@ -100,6 +113,8 @@ classDiagram
 
     FastAPIApp *-- AppState
     AppState *-- VoiceSeedIngestor
+    AppState *-- PresetRegistry
+    AppState *-- PresetRegistryReloader
     SynthesizeRouter ..> synthesize_core : delegates
     AudioRouter ..> synthesize_core : delegates (post-translate, post-strip)
     VoicesRouter ..> VoiceMetadataRepository : reads/writes
@@ -107,6 +122,8 @@ classDiagram
     synthesize_core ..> TTSProviderRegistry : looks up provider
     synthesize_core ..> VoiceMetadataRepository : reads voice
     synthesize_core ..> VoiceBlobRepository : reads ref audio
+    synthesize_core ..> PresetRegistry : resolve_preset(request, snapshot, settings)
+    PresetRegistryReloader ..> PresetRegistry : produces new snapshot (hot reload)
     VoiceSeedIngestor ..> VoiceMetadataRepository : upserts
     VoiceSeedIngestor ..> VoiceBlobRepository : copies audio
     HealthRouter ..> AppState : reads ready/state
@@ -117,4 +134,5 @@ classDiagram
 - `_drain_concurrency` (in `main.py`) waits passively on the semaphore counter rather than re-acquiring (which would race with a queued waiter).
 - Schemas + error envelope: [config-and-schemas.md](config-and-schemas.md).
 - Voice-store details: [voice-store.md](voice-store.md). Provider strategy details: [providers.md](providers.md).
-- Runtime sequences: [../sequence/startup.md](../sequence/startup.md), [../sequence/synthesize-rich.md](../sequence/synthesize-rich.md), [../sequence/create-speech.md](../sequence/create-speech.md), [../sequence/voice-crud.md](../sequence/voice-crud.md), [../sequence/voice-seed-ingestion.md](../sequence/voice-seed-ingestion.md).
+- Runtime sequences: [../sequence/startup.md](../sequence/startup.md), [../sequence/synthesize-rich.md](../sequence/synthesize-rich.md), [../sequence/create-speech.md](../sequence/create-speech.md), [../sequence/voice-crud.md](../sequence/voice-crud.md), [../sequence/voice-seed-ingestion.md](../sequence/voice-seed-ingestion.md), [../sequence/preset-resolution.md](../sequence/preset-resolution.md), [../sequence/preset-hot-reload.md](../sequence/preset-hot-reload.md).
+- Preset class shape: [presets.md](presets.md) — `PresetConfig`, `PresetEntry`, `PresetDefaults` (HF-2 expansion: `language` / `number_lang` / `voice`), `PresetRegistry`, resolver, reloader.

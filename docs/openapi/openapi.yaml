@@ -195,6 +195,20 @@ paths:
             X-Total-Duration-Ms:
               schema: { type: string }
               description: Total audio duration in ms (header on buffered, trailer when streaming and supported).
+            X-Preset-Effective:
+              schema: { type: string }
+              description: |
+                FR-PR-08. Shape `<preset>(field=value,...)` with sorted
+                keys. Reports the effective resolved configuration
+                (preset defaults overlaid by explicit request fields).
+                Stripped by the OpenAI adapter.
+            X-Preset-Ignored-Knobs:
+              schema: { type: string }
+              description: |
+                FR-PR-09. Comma-separated list of preset-supplied fields
+                the active pipeline cannot honor (e.g.
+                `response_format` until S-033 lands). Omitted when
+                empty. Stripped by the OpenAI adapter.
           content:
             audio/wav:
               schema: { type: string, format: binary }
@@ -556,6 +570,14 @@ components:
         voice:
           type: [string, "null"]
           pattern: '^[a-z0-9_-]{1,64}$'
+        preset:
+          type: [string, "null"]
+          description: |
+            Named preset (open string per FR-PR-12 — operator-defined
+            presets are accepted alongside the built-ins). Unknown
+            name → `validation_error.preset_unknown`. Unset → server
+            default (`TTS_DEFAULT_PRESET`, ships as `balanced`).
+          examples: [fast, balanced, quality]
         provider: { type: [string, "null"] }
         model: { type: [string, "null"] }
         response_format:
@@ -696,6 +718,7 @@ components:
             - provider_error
             - capacity_error
             - internal_error
+            - config_error
         param: { type: [string, "null"] }
         code: { type: string }
         request_id: { type: string }
@@ -711,7 +734,18 @@ components:
       description: |
         Validation error — e.g. `invalid_parameter`, `voice_required`,
         `voice_reference_missing`, `consent_required`, `ref_audio_invalid`,
-        `input_too_long`.
+        `input_too_long`, `preset_unknown` (FR-PR-07).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+    ConfigError:
+      description: |
+        Startup-time configuration failure surfaced through the same
+        envelope (operators see these in logs, never in a 200 path).
+        Codes: `config_error.presets_invalid` (FR-PR-02),
+        `config_error.preset_provider_invalid` (FR-PR-13),
+        `config_error.presets_unsafe_permissions` (NFR-SE-09).
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }

@@ -65,6 +65,38 @@ raises `provider_error.no_viable_provider`. The CUDA image (Dockerfile.cuda)
 should be paired with `TTS_PROVIDER=vllm-omni` or `TTS_DEVICE=cuda` so the
 override path validates the choice deterministically.
 
+## Provider vs model
+
+The two concepts are orthogonal and frequently confused:
+
+- **Provider** — the *engine* (a `TTSProviderStrategy` implementation
+  registered with `TTSProviderRegistry`). Determines which Python
+  package + device the synthesis runs on.
+- **Model** — the *checkpoint* loaded into that engine. Selected
+  per-provider from `TTS_<PROVIDER>_MODEL_ALLOWED`. Same model name
+  can be valid for multiple providers (or not — the allow-list is
+  the source of truth).
+
+| Provider name | Typical model id                       | `supports_devices` | Notes                                                                 |
+|---------------|----------------------------------------|--------------------|-----------------------------------------------------------------------|
+| `mlx_audio`   | `Qwen/Qwen3-TTS-12Hz-0.6B-Base`        | `{mps}`            | Default on Apple Silicon. Reference cloning + named voices.           |
+| `voxtral`     | `voxtral/mini-tts`                     | `{mps}`            | Cloning-only — `invalid_request` if `ref_audio_path` is missing.       |
+| `vllm-omni`   | (operator-configured)                  | `{cuda}`           | CUDA hosts. Voice optional; multiple loader import paths supported.   |
+
+If a request sets `provider="qwen"` or `provider="Qwen/Qwen3-TTS-12Hz-0.6B-Base"`
+the HF-3 error message guides the caller:
+
+```json
+{
+  "error": {
+    "type": "validation_error",
+    "code": "invalid_parameter",
+    "param": "provider",
+    "message": "provider 'qwen' is not supported. Valid providers: mlx_audio, voxtral, vllm-omni. Note: 'qwen' refers to a model family, not a provider — use provider='mlx_audio' with the desired model (e.g. model='Qwen/Qwen3-TTS-12Hz-0.6B-Base')."
+  }
+}
+```
+
 ## Endpoints
 
 | Method | Path                                  | Purpose                                                          |
@@ -93,7 +125,8 @@ JSON request body (`SynthesizeRequest`, `extra="forbid"`):
 | Field                     | Type             | Notes                                                                 |
 |---------------------------|------------------|-----------------------------------------------------------------------|
 | `input`                   | string           | Required. Length capped at `TTS_MAX_INPUT_CHARS`.                     |
-| `voice`                   | string \| null   | Voice id from the voice store. Required at the handler (envelope `voice_required`). |
+| `voice`                   | string \| null   | Voice id from the voice store. Required at the handler (envelope `voice_required`) — may instead be supplied by the resolved preset (FR-PR-03). |
+| `preset`                  | string \| null   | Named preset (open string; built-ins `fast` / `balanced` / `quality`). Unset → `TTS_DEFAULT_PRESET`. Unknown name → `validation_error.preset_unknown` (FR-PR-07). |
 | `provider`                | string \| null   | Optional override (`mlx_audio`, `voxtral`, `vllm-omni`).              |
 | `model`                   | string \| null   | Optional model override; must be in the active provider's allow-list. |
 | `response_format`         | `"wav"`          | Currently only WAV is supported end-to-end.                           |
@@ -113,24 +146,131 @@ them being present.
 
 ### Response header inventory (SRS §5 C-2)
 
-| Header                | Emitted on                                              | Meaning                                              |
-|-----------------------|---------------------------------------------------------|------------------------------------------------------|
-| `X-Request-ID`        | always (success and error)                              | Request correlation id (S-004 contextvar).           |
-| `X-Provider`          | success (rich endpoint only)                            | Provider used for synthesis.                         |
-| `X-Model`             | success (rich endpoint only)                            | Model id used.                                       |
-| `X-Device`            | success (rich endpoint only)                            | Inference device (`mps`/`cuda`/`cpu`).               |
-| `X-Dtype`             | success (rich endpoint only)                            | Inference dtype.                                     |
-| `X-Voice-Source`      | success (rich endpoint and voice-audio GET)             | `seed` or `crud`.                                    |
-| `X-Voice-Id`          | success (rich endpoint and voice-audio GET)             | Voice id resolved against the store.                 |
-| `X-Chunks`            | non-streamed success, or streamed trailer when feasible | Number of chunks synthesized.                        |
-| `X-Total-Duration-Ms` | non-streamed success, or streamed trailer when feasible | Total audio duration in milliseconds.                |
-| `X-Content-Sha256`    | `GET /v1/tts/voices/{id}/audio`                         | SHA-256 of the returned blob.                        |
-| `X-Error-Code`        | any error response                                      | Matches the envelope `error.code` (FR-ER-03).        |
+| Header                  | Emitted on                                              | Meaning                                              |
+|-------------------------|---------------------------------------------------------|------------------------------------------------------|
+| `X-Request-ID`          | always (success and error)                              | Request correlation id (S-004 contextvar).           |
+| `X-Provider`            | success (rich endpoint only)                            | Provider used for synthesis.                         |
+| `X-Model`               | success (rich endpoint only)                            | Model id used.                                       |
+| `X-Device`              | success (rich endpoint only)                            | Inference device (`mps`/`cuda`/`cpu`).               |
+| `X-Dtype`               | success (rich endpoint only)                            | Inference dtype.                                     |
+| `X-Voice-Source`        | success (rich endpoint and voice-audio GET)             | `seed` or `crud`.                                    |
+| `X-Voice-Id`            | success (rich endpoint and voice-audio GET)             | Voice id resolved against the store.                 |
+| `X-Chunks`              | non-streamed success, or streamed trailer when feasible | Number of chunks synthesized.                        |
+| `X-Total-Duration-Ms`   | non-streamed success, or streamed trailer when feasible | Total audio duration in milliseconds.                |
+| `X-Preset-Effective`    | success (rich endpoint only)                            | Resolved preset + effective fields (FR-PR-08).       |
+| `X-Preset-Ignored-Knobs`| success (rich endpoint only, when non-empty)            | Preset fields the active pipeline cannot honor (BR-17 / FR-PR-09). |
+| `X-Content-Sha256`      | `GET /v1/tts/voices/{id}/audio`                         | SHA-256 of the returned blob.                        |
+| `X-Error-Code`          | any error response                                      | Matches the envelope `error.code` (FR-ER-03).        |
 
 The OpenAI-adapter path (`POST /v1/audio/speech`) strips the rich-only
 headers (`X-Provider`, `X-Model`, `X-Device`, `X-Dtype`, `X-Voice-Source`,
-`X-Voice-Id`, `X-Chunks`, `X-Total-Duration-Ms`) so the response shape stays
-byte-identical to OpenAI (FR-OA-01..03 + NFR-PT-03b).
+`X-Voice-Id`, `X-Chunks`, `X-Total-Duration-Ms`, `X-Preset-Effective`,
+`X-Preset-Ignored-Knobs`) so the response shape stays byte-identical to
+OpenAI (FR-OA-01..03 + NFR-PT-03b).
+
+`X-Preset-Effective` has the shape `<preset_name>(field=value,...)` where
+the field list is the post-merge resolved configuration (preset defaults
+overlaid by explicit request fields), key-sorted for stability. Example:
+
+```
+X-Preset-Effective: quality(language=it,max_sentences_per_chunk=3,model=Qwen/Qwen3-TTS-12Hz-0.6B-Base,normalize_db=-20.0,provider=mlx_audio,response_format=flac,temperature=0.8,top_p=0.95)
+X-Preset-Ignored-Knobs: response_format
+```
+
+(`response_format=flac` is recorded as effective for transparency, then
+the rich pipeline soft-ignores it because only WAV is end-to-end yet —
+that fact is surfaced via `X-Preset-Ignored-Knobs` per FR-PR-09.)
+
+## Audio presets (S-027 / S-028 / S-029)
+
+A **preset** is a named bundle of synthesis defaults loaded from
+`config/presets.json` (overridable via `TTS_PRESETS_FILE`). The registry
+is parsed + schema-validated + permission-checked at startup; any
+failure raises `config_error.presets_invalid` /
+`config_error.preset_provider_invalid` / `config_error.presets_unsafe_permissions`
+and the service refuses to come up (NFR-SE-09 / FR-PR-02 / FR-PR-13).
+
+Three presets ship out of the box:
+
+| Name       | Description                                                          | Pinned `(provider, model)`                          | Notable defaults                                                  |
+|------------|----------------------------------------------------------------------|-----------------------------------------------------|-------------------------------------------------------------------|
+| `fast`     | Low-TTFB interactive. Conservative sampling, single-sentence chunks. | — (uses the auto-selected provider + its default)   | `temperature=0.7`, `top_p=0.9`, `max_sentences_per_chunk=1`.      |
+| `balanced` | Cycle-1 default behaviour. The server default unless overridden.     | — (uses the auto-selected provider + its default)   | `temperature=0.8`, `top_p=0.95`, `max_sentences_per_chunk=2`.     |
+| `quality`  | Buffered audiobook chapter. Full post-processing.                    | `mlx_audio` + `Qwen/Qwen3-TTS-12Hz-0.6B-Base`       | `language=en`, `response_format=flac` (soft-ignored — see note), `postprocess.rms_normalize=true`, `postprocess.silence_trim=true`. |
+
+`quality` exercises the FR-PR-13 cross-check at startup: the
+`(provider, model)` pin is validated against the active provider's
+allow-list, so a misconfigured pin fails startup with
+`config_error.preset_provider_invalid` rather than at the first request.
+
+### Precedence (BR-10)
+
+> **Explicit request field > preset defaults > Settings / VoiceRecord defaults.**
+
+The resolver (`resolve_preset` in `services/synthesize_service.py`) is
+pure — it reads only the request, the request-scoped registry snapshot,
+and `Settings`. The snapshot is captured per-request via
+`Depends(get_preset_registry_snapshot)`, so a mid-flight hot-reload
+swap cannot tear a resolution (NFR-PR-04 in-flight invariant).
+
+Conflicts between explicit fields and preset pins are recorded in
+`X-Preset-Effective` and logged at WARN. Knobs the active pipeline
+cannot honor (e.g. `response_format=flac` before S-033 lands the
+format-extension pipeline) are soft-ignored and listed in
+`X-Preset-Ignored-Knobs` (BR-17 / FR-PR-09).
+
+### Authoring a custom preset
+
+The presets file is operator-owned. Custom presets are accepted as
+long as they pass schema validation and (where applicable) the
+provider/model cross-check. Per FR-PR-12 the `/v1/models` catalog
+**does not** enumerate preset names; presets are an operator-facing
+config surface, not a discovery API.
+
+```json
+{
+  "audiobook_it": {
+    "label": "Italian audiobook",
+    "description": "MLX-Audio + Qwen3, Italian, buffered.",
+    "defaults": {
+      "provider": "mlx_audio",
+      "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+      "language": "Italian",
+      "number_lang": "it",
+      "voice": "gold",
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "max_sentences_per_chunk": 3,
+      "normalize_db": -20.0,
+      "postprocess": {
+        "rms_normalize": true,
+        "silence_trim": true,
+        "denoise": false
+      }
+    }
+  }
+}
+```
+
+`defaults.provider`, `defaults.model`, and `defaults.voice` are
+optional but powerful: a preset that supplies `voice` lets clients
+omit it on the request (FR-PR-03 — `voice_required` falls through to
+the preset). This is exactly the workflow targeted by the
+`audiobook_it` example above: clients hit `POST /v1/tts/synthesize`
+with `{"input": "...", "preset": "audiobook_it"}` and nothing else.
+
+### Hot reload (S-029)
+
+The reloader watches `TTS_PRESETS_FILE` via the same `watchfiles`
+primitive as the seed map (`ConfigWatcher` in
+`services/config_watcher.py`). On every change it re-runs the
+startup validation chain MINUS the file-permission check (the
+permission posture is startup-only per RISK-PR-3 — the
+`mv` + `chmod` race window is the documented limitation). Valid
+edits are swapped atomically into `app.state.preset_registry`;
+invalid edits log a single WARN line with the would-be
+`config_error.*` code and keep the prior registry live
+(NFR-SE-10 attack tolerance).
 
 ### Voice CRUD (S-022 .. S-025)
 
@@ -440,13 +580,61 @@ curl -X POST "http://localhost:8000/v1/audio/speech" \
   --output speech.wav
 ```
 
-Voice CRUD (create):
+Rich endpoint with explicit preset + override (precedence demo):
 
 ```bash
-curl -X POST "http://localhost:8000/v1/tts/voices" \
-  -F 'metadata={"id":"gold","transcript":"Ciao","language":"Italian","consent_acknowledged":true};type=application/json' \
-  -F 'audio=@./gold.wav;type=audio/wav'
+curl -X POST "http://localhost:8000/v1/tts/synthesize" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "Il 15/04/2026 abbiamo 2 appuntamenti.",
+    "voice": "gold",
+    "preset": "quality",
+    "language": "it",
+    "stream": false
+  }' \
+  --output speech.flac
+# Response includes:
+#   X-Preset-Effective: quality(language=it,max_sentences_per_chunk=3,model=Qwen/...,normalize_db=-20.0,provider=mlx_audio,response_format=flac,temperature=0.8,top_p=0.95)
+#   X-Preset-Ignored-Knobs: response_format
 ```
+
+## Voice cloning (S-022 .. S-025)
+
+Voice cloning is a two-step workflow rooted entirely in the voice
+store. The cycle-1 inline `ref_audio` field on the rich request has
+been retired — the canonical surface is now:
+
+1. **Register the reference voice** via `POST /v1/tts/voices`
+   (multipart: `metadata` JSON + `audio` blob). The service hashes,
+   validates, and persists the blob through the configured
+   `VoiceBlobRepository`. `consent_acknowledged=true` is mandatory
+   on POST (NFR-CP-01).
+2. **Synthesize with the registered id** by referencing
+   `voice="<id>"` on `POST /v1/tts/synthesize` (or on `POST /v1/audio/speech`).
+
+```bash
+# Step 1 — register
+curl -X POST "http://localhost:8000/v1/tts/voices" \
+  -F 'metadata={"id":"gold","transcript":"Ciao, questa è una voce di riferimento.","language":"Italian","consent_acknowledged":true};type=application/json' \
+  -F 'audio=@./gold.wav;type=audio/wav'
+
+# Step 2 — synthesize using the registered id
+curl -X POST "http://localhost:8000/v1/tts/synthesize" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "Buongiorno, oggi vi racconto una storia.",
+    "voice": "gold"
+  }' \
+  --output speech.wav
+
+# Step 3 (optional) — delete when no longer needed (FR-VS-09)
+curl -X DELETE "http://localhost:8000/v1/tts/voices/gold"
+```
+
+Operators wanting to ship a voice catalog as part of the deployment
+populate the seed map (`TTS_VOICE_MAP_FILE` → `voice_map.json`) instead
+of running CRUD POSTs. Seed-ingested records are upserted at startup
+with `source="seed"` and are hot-reloaded when the file changes.
 
 ## Testing
 
