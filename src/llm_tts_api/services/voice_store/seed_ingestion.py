@@ -22,13 +22,13 @@ config; the ingestor logs an info line and exits cleanly.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from llm_tts_api.services.config_watcher import ConfigWatcher
 from llm_tts_api.services.voice_store.protocols import (
     VoiceBlobRepository,
     VoiceMetadataRepository,
@@ -142,43 +142,21 @@ class VoiceSeedIngestor:
     async def watch_and_ingest(self) -> None:
         """Long-running task: re-run ingestion on every seed-file change.
 
-        FR-VM-02 / NFR-OP-05: detect file change within ~2 s. Uses
-        ``watchfiles.awatch`` against the parent directory (single-file
-        watches miss editor "save = rename" patterns). The polling
-        fallback is enabled via ``force_polling=True`` for Docker
-        bind-mount environments where inotify is unreliable (RISK-3).
+        FR-VM-02 / NFR-OP-05: detect file change within ~2 s. Delegates
+        to :class:`ConfigWatcher` (S-029 T1) which owns the watchfiles +
+        polling-fallback mechanic. The polling fallback is enabled via
+        ``force_polling=True`` for Docker bind-mount environments where
+        inotify is unreliable (RISK-3).
         """
-        path = self._seed_file_path
-        if path is None:
-            return
-        try:
-            from watchfiles import awatch
-        except ImportError:  # pragma: no cover - watchfiles is a hard dep
-            logger.warning("watchfiles unavailable; voice-map hot reload disabled")
-            return
+        watcher = ConfigWatcher(
+            path=self._seed_file_path,
+            on_change=self._on_seed_changed,
+            force_polling=self._force_polling,
+        )
+        await watcher.watch()
 
-        watch_root = path.parent if path.parent != Path("") else Path(".")
-        target = path.resolve()
-        try:
-            async for changes in awatch(
-                watch_root,
-                force_polling=self._force_polling,
-                # Tight step keeps p95 reload latency well under the 2 s NFR.
-                step=200,
-            ):
-                # Filter to changes that touch the seed file. ``awatch``
-                # streams every change in the directory; we re-ingest
-                # only when the file we care about moves. Compare on
-                # resolved paths because the watcher may emit absolute
-                # paths from a different symlink chain than ``path``.
-                touched = any(Path(p).resolve() == target for _change_type, p in changes)
-                if not touched:
-                    continue
-                await self.ingest_once()
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - the watcher must never crash startup
-            logger.exception("voice_seed_ingest: watcher loop crashed")
+    async def _on_seed_changed(self) -> None:
+        await self.ingest_once()
 
 
 class _SeedValidationError(ValueError):

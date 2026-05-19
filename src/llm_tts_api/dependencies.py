@@ -22,6 +22,7 @@ from llm_tts_api.config import PreloadEntry, Settings
 from llm_tts_api.engine import DeviceProfile, resolve_device_profile
 from llm_tts_api.services.model_cache import LRUModelCache
 from llm_tts_api.services.model_registry import ModelRegistry
+from llm_tts_api.services.presets import PresetRegistry
 from llm_tts_api.services.stt_service import STTService
 from llm_tts_api.services.tts_providers.auto_select import (
     ProviderSelection,
@@ -301,3 +302,21 @@ def get_voice_metadata_repo(request: Request) -> VoiceMetadataRepository:
 def get_voice_blob_repo(request: Request) -> VoiceBlobRepository:
     """Return the process-wide :class:`VoiceBlobRepository` (S-022)."""
     return cast(VoiceBlobRepository, request.app.state.voice_blob_repo)
+
+
+def get_preset_registry_snapshot(request: Request) -> PresetRegistry:
+    """Return the request-scoped :class:`PresetRegistry` snapshot (S-029 T3).
+
+    This getter is resolved by FastAPI ONCE per request, at request-entry,
+    binding the current ``app.state.preset_registry`` for the whole call.
+    Even if the S-029 reloader replaces the slot mid-flight, the request
+    keeps the snapshot it captured here — that is the NFR-PR-04 in-flight
+    snapshot invariant the cycle-2 hot-reload story locks in.
+
+    S-028's ``resolve_preset(request, snapshot, settings)`` consumes this
+    via ``Depends(get_preset_registry_snapshot)``; the resolver MUST NOT
+    re-read ``app.state.preset_registry`` directly. The contract is
+    documented in ``docs/planning/sprints/sprint-impl-7.md`` § "Locked
+    Service Interface".
+    """
+    return cast(PresetRegistry, request.app.state.preset_registry)
