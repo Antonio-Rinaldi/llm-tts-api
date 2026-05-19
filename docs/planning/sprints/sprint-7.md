@@ -7,7 +7,7 @@
 > UAT: docs/specs/analyst-UAT.md UAT-PR-01..17
 > Author: Sprint Planner (AI-assisted)
 > Date: 2026-05-19
-> Status: PLANNED
+> Status: READY-FOR-REVIEW
 > Version: 1.0
 
 ## 1. Sprint Objective

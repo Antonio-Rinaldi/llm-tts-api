@@ -11,7 +11,7 @@ completes in its isolated worktree. Companion to `sprint-7.md`.
 | S-028 | Technical | READY-FOR-REVIEW | sprint-7-S-028 (merged) |
 | S-029 | Technical | READY-FOR-REVIEW | sprint-7-S-029 (merged) |
 
-Sprint 7 status: All stories READY-FOR-REVIEW; pending story + sprint reviews.
+Sprint 7 status: Complete — reviewed.
 
 ---
 
@@ -851,4 +851,118 @@ This is the cross-task invariant most likely to drift; the test is explicit and 
 This review is informational; no code changes were made on `sprint-7-S-029-review`.
 
 ---
+
+
+---
+
+# Sprint 7 — Sprint-Level Review (Phase 1P cross-story coherence)
+
+**Reviewer:** code-reviewer (sprint-level, Phase 1P)
+**Date:** 2026-05-19
+**Sprint:** 7 (cycle-2 Step 1+2 — S-027 / S-028 / S-029)
+**Worktree:** `.worktrees/sprint-7/sprint-review` (branch `sprint-7-sprint-review`)
+**Scope:** Cross-story coherence across the three Sprint-7 stories *after* all three story-level reviews and the S-027-review wiring fix have landed. Phase 1S (intra-story) coherence was cleared in the three story reviews assembled into `sprint-impl-7.md`; this review focuses strictly on the *sprint-level* seams the plan calls out.
+
+## Verdict
+
+**READY-FOR-MERGE at the sprint level. No cross-story coherence issues remain.**
+
+The cycle-2 spine — config → snapshot → resolution → atomic swap — composes cleanly on top of cycle-1's lifespan, `app.state`, error envelope, and the S-011 watcher primitive. The Locked Service Interface from S-027 is honored verbatim by both consumers, the request-scoped snapshot dependency is now wired through both rich endpoints (S-027-review fix), and the S-018 byte-identity invariant (NFR-PT-05) survives intact.
+
+## Gates re-run in this worktree
+
+| Gate | Result | Baseline |
+|---|---|---|
+| `uv run ruff check .` | clean | clean |
+| `uv run ruff format --check .` | clean (103 files) | clean |
+| `uv run mypy --strict src/` | Success — **57 source files** | 57 files ✅ |
+| `uv run pytest` | **426 passed, 2 skipped, 3 deselected, 1 xfailed** | 426/2/1 ✅ |
+| `uv run pytest tests/test_openai_adapter_parity.py -v` | **3 passed** | 3 ✅ |
+| `git diff master -- tests/test_openai_adapter_parity.py` | **empty (0 lines)** | empty ✅ |
+| `uv run pytest tests/test_voice_seed_ingestion.py` | **20 passed** (post-`ConfigWatcher` refactor) | 20 ✅ |
+
+Exact baseline parity. No regressions.
+
+## 1. Shared cycle-1 infrastructure — does cycle-2 sit cleanly?
+
+| Cycle-1 surface | Cycle-2 use | Verdict |
+|---|---|---|
+| `main.py::lifespan` | S-027 initializes `app.state.preset_registry`; S-029 spawns `preset-registry-reloader` task after the initial slot is populated; shutdown cancels the reloader before the S-010 drain — same ordering as the voice-map watcher. | ✅ Coherent. Reloader cannot observe an unset slot. |
+| `app.state` slots | Single new slot `preset_registry: PresetRegistry`; written by lifespan init + reloader `on_swap` only (verified via `grep`); read by `Depends(get_preset_registry_snapshot)`. | ✅ No dual-write. |
+| `errors.py` taxonomy | Three new `config_error.*` codes registered by S-027; `validation_error.preset_unknown` registered by S-028; no duplication. | ✅ Boundary respected per Locked Interface §5. |
+| `services/voice_store/seed_ingestion.py` (S-011 watcher) | S-029 T1 extracted the inner mechanic into `services/config_watcher.py::ConfigWatcher`; seed ingestion now delegates. | ✅ All 20 cycle-1 voice-seed tests green, incl. UAT-VM-03 (≤2 s reload). |
+| `_RICH_ONLY_HEADERS` in `routers/audio.py` | S-028 T4 extended the set with `X-Preset-Effective` + `X-Preset-Ignored-Knobs`; OpenAI adapter strips both. | ✅ Cycle-1 OpenAI-identity preserved. |
+
+The S-029 `ConfigWatcher` generalization is the highest-leverage piece of cycle-1↔cycle-2 reuse and the place most at risk of regressing the cycle-1 UX. `tests/test_voice_seed_ingestion.py` (20 tests) is the standing regression net; running it in this worktree gives 20 passed — no behavioral drift in the FR-VM-05 (`path=None` no-op), the 200 ms cadence, the `force_polling` plumbing, or the parent-dir-watch + resolve-filter pattern that handles editor save-as-rename.
+
+## 2. Integration boundaries — Locked Service Interface honored?
+
+The Locked Interface (S-027 impl notes §"Locked Service Interface"):
+
+```python
+def resolve_preset(
+    request: SynthesizeRequest,
+    snapshot: PresetRegistry,
+    settings: Settings,
+) -> EffectiveSynthesisConfig: ...
+```
+
+Verified post-S-027-review fix:
+
+* **Resolver shape** — `services/synthesize_service.py::resolve_preset` matches the signature verbatim. Pure (no `app.state` read, no I/O beyond the documented HTTPException raise).
+* **Snapshot binding** — both rich endpoints now declare `preset_snapshot: Annotated[PresetRegistry, Depends(get_preset_registry_snapshot)]` and pass it explicitly into `synthesize_core` (`routers/audio.py:146,160`, `routers/synthesize.py:68,80`). `synthesize_core` takes `preset_snapshot` as a keyword-only parameter and forwards it to `resolve_preset` — no inline `request.app.state.preset_registry` read remains on the request path.
+* **Atomic-swap writer** — `main.py::lifespan::_swap_preset_registry` is the only write site beyond the initial lifespan load; it rotates the slot to a fresh `PresetRegistry` reference, never mutating the prior object. `PresetRegistry` is `@dataclass(frozen=True, slots=True)`.
+* **Reader/writer asymmetry** — `Depends(get_preset_registry_snapshot)` resolves *once per request* before the handler body executes; the captured reference is the resolver's input for the full request lifecycle. Combined with the frozen-object swap, this gives the NFR-PR-04 tear-free guarantee structurally rather than by convention.
+
+The S-027-review commit (`b26d62f` + merge `224f9e0`) is the load-bearing fix that takes the contract from "honored in spirit" to "honored mechanically" — `get_preset_registry_snapshot` is no longer dead code; it is the documented wire-point and now the actual wire-point.
+
+## 3. Behavioral interactions — atomic swap × snapshot semantic
+
+The cross-story invariant most likely to drift is "an in-flight request resolving against a snapshot bound at request-entry must continue to resolve correctly after the reloader has rotated the slot." Two structural guarantees keep this invariant:
+
+1. `PresetRegistry` is immutable; the swap is a slot rotation, not an in-place mutation.
+2. `Depends(get_preset_registry_snapshot)` runs once per request before the handler awaits anything; the resolver consumes the captured reference exclusively.
+
+Both are exercised end-to-end by `test_in_flight_snapshot_survives_mid_flight_swap` (in `tests/test_preset_hot_reload.py`): bind snapshot → call `reload_once()` (which swaps) → assert the prior preset set is still resolvable through the snapshot.
+
+The reloader's WARN-then-keep-prior path on invalid edits (`reload_once` returns without calling `on_swap` on any of the three failure modes — schema-invalid, default-preset-unknown, provider-allow-list-fail) is the NFR-SE-10 attack-tolerant counterpart: an attacker writing a tampered file cannot take the service down or replace the running config silently.
+
+## 4. NFR-OP-06 (per-synthesis log line) — premature wiring check
+
+NFR-OP-06 is deferred to S-034. `grep -rn 'synthesis.*completed\|preset_name=.*log\|S-034' src/` returns only `services/synthesize_service.py:215: preset_name=name,` — that line is a *struct field assignment* inside the `EffectiveSynthesisConfig` constructor, not a log emission. **No premature S-034 wiring** in production code. The pre-existing structured log lines in the rich path (`request_id` carrier WARNs on conflicts, `preset_registry_loaded` / `preset_registry_reloaded` info lines) are appropriate Sprint-7 scope and do not pretend to be the deferred NFR-OP-06 per-synthesis line.
+
+## 5. Regression risk — NFR-PT-05 (S-018 paired UAT)
+
+The most load-bearing cycle-2 invariant. Verified end-to-end in this worktree:
+
+* `git diff master -- tests/test_openai_adapter_parity.py` → **0 lines** (byte-identical to master).
+* `uv run pytest tests/test_openai_adapter_parity.py -v` → **3 passed**.
+* The added parametrized case in `tests/test_preset_resolution.py` exercises `rich(preset='balanced') ↔ OpenAI-default` and asserts identical sha256 on the response body — the load-bearing cycle-2 path through the resolver.
+
+Cycle-1 voice-map regression (UAT-VM-*) post-`ConfigWatcher` refactor: all 20 tests in `tests/test_voice_seed_ingestion.py` pass — the S-029 T1 refactor preserved the cycle-1 behavioral contract.
+
+## 6. Test fixture coverage of the new `app.state` slot
+
+S-028 conftest changes seed `app.state.preset_registry` (plus the three new `Settings` fields `tts_default_preset` / `tts_presets_file` / `tts_silence_trim_threshold_db`) for every request-path test. Two tests that build their own app-state bypass (`tests/test_concurrency.py:267-276`, `tests/test_perf_regression.py:194-202`) also seed the registry — verified by `grep`. No test on the request path can hit a `KeyError`/`AttributeError` on the new slot.
+
+## 7. Minor observations (not Sprint-7 defects)
+
+* **Documentation count nit** flagged by the S-028 review and confirmed here: S-029 impl notes claim "all 23 cycle-1 voice-map tests still pass", actual count is 20 (`tests/test_voice_seed_ingestion.py` collected: 20). Pure doc nit; the impl notes are append-only and the substantive claim (zero regressions) is correct. No fix required.
+* **Permission check is startup-only** — explicitly documented in S-027 + S-029 impl notes and pinned by `test_reload_skips_permission_check` (RISK-PR-3 / NFR-OP-PR-3). This is a documented trade-off, not a coherence gap; operators own the `mv`+`chmod` race per the published risk row.
+
+## 8. Risks examined and confirmed mitigated
+
+| Sprint plan risk | Where mitigated | Sprint-level verification |
+|---|---|---|
+| NFR-PT-05 — S-018 byte-identity breaks under preset resolution drift (RISK-PR-5) | S-028 T6 + S-027 story review | parity diff empty; 3/3 paired UAT pass; new parametrized sha256 case in `test_preset_resolution.py` |
+| S-027 ↔ S-029 lifespan coupling (reloader races with initial validation) | S-029 T4 sequencing | reloader spawned only after `_load_presets_or_exit` returns a populated slot; shutdown cancel ordered before S-010 drain |
+| S-028 ↔ S-029 resolver-signature alignment | Locked in S-027 impl notes; honored verbatim | `synthesize_service.py::resolve_preset` matches; `Depends(get_preset_registry_snapshot)` wired through both endpoints post-fix |
+| `watchfiles` flaky in Docker (RISK-3) | `force_polling_from_env` reading `TTS_PRESETS_WATCH_FORCE_POLLING` | parallels cycle-1's `TTS_VOICE_MAP_WATCH_FORCE_POLLING`; independent env vars; no accidental coupling |
+| `PresetConfig` schema drift across cycle-2 stories | `extra="forbid"` at every level; root-level is `RootModel` (operator-defined presets per FR-PR-12 require this) | gated by 28 unit tests in `tests/test_presets_config.py` |
+
+## Recommendation
+
+Sprint 7 is **READY-FOR-MERGE** at the sprint level. The cycle-2 spine is end-to-end coherent, all gates match the cycle-1 baseline, and the load-bearing S-018 byte-identity invariant is preserved both structurally (frozen `EffectiveSynthesisConfig` resolution shared across rich and OpenAI paths via the same `_RICH_ONLY_HEADERS` stripping mechanism) and behaviorally (paired UAT byte-diff is zero). No cross-story fixes were required in this sprint review; the necessary wiring fix already landed during the S-027 story-level review.
+
+The three downstream cycle-2 parallel-Group-H stories (S-030..S-036) can now consume `EffectiveSynthesisConfig`, the request-scoped snapshot, and the validate-before-swap reload semantic on a stable foundation.
 

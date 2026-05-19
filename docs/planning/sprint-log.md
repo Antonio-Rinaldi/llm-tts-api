@@ -10,7 +10,7 @@ Tracks sprints planned and their disposition.
 | 4 | Rich endpoint surface — synthesize + streaming + cancellation | S-013, S-015, S-016 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
 | 5 | OpenAI adapter + byte-identity equivalence | S-017, S-018 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-19 |
 | 6 | Cycle close-out — docs, container, perf validation, dedup | S-019, S-020, S-021, S-026 | DONE | 2026-05-19 | 2026-05-19 | 2026-05-19 |
-| 7 | **Cycle 2** — Presets foundation + resolution + hot-reload | S-027, S-028, S-029 | PLANNED | 2026-05-19 | — | — |
+| 7 | **Cycle 2** — Presets foundation + resolution + hot-reload | S-027, S-028, S-029 | READY-FOR-REVIEW | 2026-05-19 | 2026-05-19 | — |
 
 ## Sprint 7 — summary
 
