@@ -52,6 +52,17 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
     settings.tts_preload_models = []
     settings.tts_shutdown_drain_seconds = 0
     settings.tts_min_free_memory_gb = 0
+    # S-027 cycle-2 preset slots — point at the shipped config so the
+    # lifespan's new startup-validation step (initialize_preset_registry)
+    # finds a valid registry.
+    from pathlib import Path
+
+    settings.tts_presets_file = Path(__file__).resolve().parents[1] / "config" / "presets.json"
+    settings.tts_default_preset = "balanced"
+    settings.tts_silence_trim_threshold_db = -50.0
+    settings.tts_mlx_audio_model_allowed = ["Qwen/Qwen3-TTS-12Hz-0.6B-Base"]
+    settings.tts_voxtral_model_allowed = ["mlx-community/Voxtral-4B-TTS-2603-mlx-4bit"]
+    settings.tts_vllm_omni_model_allowed = ["vllm-omni/default-tts"]
 
     return AppDependencies(
         settings=settings,

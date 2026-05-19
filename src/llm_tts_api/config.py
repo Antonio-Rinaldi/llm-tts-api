@@ -118,6 +118,16 @@ class Settings:
     # S-025 — per-upload hard cap for voice-CRUD audio (NFR-SE-01). Default 10 MiB.
     tts_refaudio_max_bytes: int = 10 * 1024 * 1024
 
+    # S-027 — cycle-2 presets foundation. ``tts_default_preset`` is the
+    # name applied when a request omits ``preset`` (and is the only preset
+    # OpenAI-compat path ever uses per BR-12). ``tts_presets_file`` points
+    # at the JSON registry parsed by the lifespan. ``tts_silence_trim_threshold_db``
+    # is declared here so the env-var inventory test catches it; S-031
+    # consumes it.
+    tts_default_preset: str = "balanced"
+    tts_presets_file: Path = field(default_factory=lambda: Path("config/presets.json"))
+    tts_silence_trim_threshold_db: float = -50.0
+
     def __post_init__(self) -> None:
         """Load all settings from environment and validate their values."""
         self._load_app_identity()
@@ -131,7 +141,30 @@ class Settings:
         self.tts_refaudio_max_bytes = self._load_int(
             "TTS_REFAUDIO_MAX_BYTES", self.tts_refaudio_max_bytes, minimum=1
         )
+        self._load_presets_settings()
         self.tts_voice_map = self._load_voice_map_from_file()
+
+    def _load_presets_settings(self) -> None:
+        """Resolve S-027 cycle-2 env vars (presets file, default preset, trim floor).
+
+        Validation of TTS_DEFAULT_PRESET against the loaded registry is
+        deferred to the lifespan (the registry is not available at
+        ``Settings.__post_init__`` time). Here we only sanity-check
+        non-empty values and the numeric parse for the trim threshold.
+        """
+        raw_preset = os.environ.get("TTS_DEFAULT_PRESET", "").strip()
+        self.tts_default_preset = raw_preset or self.tts_default_preset
+        raw_file = os.environ.get("TTS_PRESETS_FILE", "").strip()
+        self.tts_presets_file = Path(raw_file) if raw_file else Path("config/presets.json")
+
+        raw_db = os.environ.get("TTS_SILENCE_TRIM_THRESHOLD_DB", "").strip()
+        if raw_db:
+            try:
+                self.tts_silence_trim_threshold_db = float(raw_db)
+            except ValueError as exc:
+                raise ValueError(
+                    "TTS_SILENCE_TRIM_THRESHOLD_DB must be a floating-point dBFS value"
+                ) from exc
 
     def _load_voice_store_dir(self) -> None:
         """Resolve ``TTS_VOICE_STORE_DIR`` (default ``var/voices/``)."""

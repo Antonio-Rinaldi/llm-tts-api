@@ -26,6 +26,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from llm_tts_api.app_logging import setup_logging
 from llm_tts_api.dependencies import build_default_dependencies
 from llm_tts_api.errors import (
+    CONFIG_ERROR_PRESET_PROVIDER_INVALID,
+    CONFIG_ERROR_PRESETS_INVALID,
+    CONFIG_ERROR_PRESETS_UNSAFE_PERMISSIONS,
     OpenAIHTTPException,
     http_exception_handler,
     openai_exception_handler,
@@ -40,10 +43,51 @@ from llm_tts_api.routers.models import router as models_router
 from llm_tts_api.routers.realtime import router as realtime_router
 from llm_tts_api.routers.synthesize import router as synthesize_router
 from llm_tts_api.routers.voices import router as voices_router
+from llm_tts_api.services.presets import (
+    PresetProviderInvalidError,
+    PresetsInvalidError,
+    PresetsUnsafePermissionsError,
+    initialize_preset_registry,
+)
 
 logger = logging.getLogger(__name__)
 
 TEST_BYPASS_ENV = "LLM_TTS_API_TEST_NO_LIFESPAN"
+
+
+def _load_presets_or_exit(
+    settings: object,
+    provider_registry: object,
+) -> object:
+    """Run S-027 startup validation, translating typed errors to ``SystemExit``.
+
+    Each cycle-2 typed exception (:class:`PresetsInvalidError`,
+    :class:`PresetsUnsafePermissionsError`, :class:`PresetProviderInvalidError`)
+    is converted into a ``SystemExit`` whose argument is the matching
+    ``config_error.*`` code joined with the human-readable detail. The
+    lifespan never catches ``SystemExit`` — uvicorn surfaces it as a
+    non-zero process exit before the HTTP socket binds, matching the
+    UAT-PR-11..14 "process exits non-zero with `config_error.*`" expectation.
+    """
+    from llm_tts_api.config import Settings  # local import to avoid cycle at module load
+    from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
+
+    assert isinstance(settings, Settings)  # noqa: S101 — type narrow for the helper
+    assert isinstance(provider_registry, TTSProviderRegistry)  # noqa: S101
+    try:
+        return initialize_preset_registry(settings, provider_registry)
+    except PresetsUnsafePermissionsError as exc:
+        message = f"{CONFIG_ERROR_PRESETS_UNSAFE_PERMISSIONS}: {exc}"
+        logger.error(message)
+        raise SystemExit(message) from exc
+    except PresetProviderInvalidError as exc:
+        message = f"{CONFIG_ERROR_PRESET_PROVIDER_INVALID}: {exc}"
+        logger.error(message)
+        raise SystemExit(message) from exc
+    except PresetsInvalidError as exc:
+        message = f"{CONFIG_ERROR_PRESETS_INVALID}: {exc}"
+        logger.error(message)
+        raise SystemExit(message) from exc
 
 
 def _emit_low_memory_warning(threshold_gb: int) -> None:
@@ -161,6 +205,12 @@ def create_app() -> FastAPI:
                 app.state.provider_selection = deps.provider_selection
                 app.state.model_registry = deps.model_registry
                 app.state.provider_registry = deps.provider_registry
+                # S-027 — load + validate presets registry BEFORE wiring services
+                # so a misconfigured presets.json fails fast with one of the
+                # config_error.* codes (FR-PR-02/05/13, NFR-SE-09 / UAT-PR-11..14).
+                app.state.preset_registry = _load_presets_or_exit(
+                    deps.settings, deps.provider_registry
+                )
                 app.state.model_cache = deps.model_cache
                 app.state.tts_service = deps.tts_service
                 app.state.stt_service = deps.stt_service
