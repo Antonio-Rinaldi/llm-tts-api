@@ -38,6 +38,14 @@ class SynthesizeRequest(BaseModel):
     model: str | None = Field(default=None, description="Optional model override.")
     response_format: Literal["wav"] = Field(default="wav")
     stream: bool = Field(default=False, description="Wired by S-015; the S-013 handler buffers.")
+    preset: str | None = Field(
+        default=None,
+        description=(
+            "Optional named preset (open string — operator-defined presets are accepted). "
+            "Ships with: 'fast', 'balanced', 'quality'. Unknown name → 400 preset_unknown."
+        ),
+        examples=["fast", "balanced", "quality"],
+    )
     normalize_db: float | None = Field(default=None, description="Per-request RMS target dBFS.")
     max_sentences_per_chunk: int | None = Field(default=None, ge=1)
     language: str | None = None

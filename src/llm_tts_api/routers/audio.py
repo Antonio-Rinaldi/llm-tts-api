@@ -65,6 +65,13 @@ _RICH_ONLY_HEADERS: frozenset[str] = frozenset(
         "x-voice-id",
         "x-chunks",
         "x-total-duration-ms",
+        # S-028 — preset resolution headers (FR-PR-08 / FR-PR-09). Rich
+        # endpoint emits ``X-Preset-Effective`` always and
+        # ``X-Preset-Ignored-Knobs`` when non-empty; the OpenAI adapter
+        # strips both so its response stays OpenAI-identical and the S-018
+        # byte-identity (NFR-PT-05) invariant holds.
+        "x-preset-effective",
+        "x-preset-ignored-knobs",
     }
 )
 

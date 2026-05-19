@@ -22,7 +22,8 @@ import tempfile
 import wave
 from collections.abc import AsyncIterator, Mapping, MutableMapping
 from contextlib import suppress
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Final, TypeVar
 
 import anyio.to_thread
 from fastapi import Request, Response
@@ -32,6 +33,7 @@ from starlette.types import Receive, Scope, Send
 from llm_tts_api.config import Settings, VoiceConfig
 from llm_tts_api.engine import DeviceProfile
 from llm_tts_api.errors import (
+    OpenAIError,
     OpenAIHTTPException,
     capacity_error,
     internal_error,
@@ -41,6 +43,7 @@ from llm_tts_api.errors import (
 from llm_tts_api.observability import current_request_id
 from llm_tts_api.schemas.synthesis import SynthesizeRequest
 from llm_tts_api.services.audio_postprocessing import normalize_wav_rms
+from llm_tts_api.services.presets.config import PresetPostprocess, PresetRegistry
 from llm_tts_api.services.text_preprocessing import (
     preprocess_for_tts,
     split_text_semantic,
@@ -62,6 +65,165 @@ from llm_tts_api.services.voice_store import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_T = TypeVar("_T")
+
+
+# S-028 — Pipeline-supported response formats. Rich path is still wav-only
+# until S-033 extends format support; a preset asking for flac/wav24 is
+# soft-ignored and surfaced via ``X-Preset-Ignored-Knobs``.
+_PIPELINE_SUPPORTED_FORMATS: Final[frozenset[str]] = frozenset({"wav"})
+
+
+@dataclass(frozen=True, slots=True)
+class EffectiveSynthesisConfig:
+    """Frozen, fully-resolved synthesis configuration (S-028 / FR-PR-06).
+
+    Single shape consumed downstream by all synthesis code. Built by
+    :func:`resolve_preset` from a request + a request-scoped
+    :class:`PresetRegistry` snapshot + :class:`Settings`. ``ignored_knobs``
+    captures preset-supplied values the active pipeline cannot honor
+    (BR-17). ``effective_overrides`` records explicit request fields that
+    overrode preset pins (FR-PR-08) — surfaced verbatim in the
+    ``X-Preset-Effective`` response header.
+    """
+
+    preset_name: str
+    provider: str | None
+    model: str | None
+    temperature: float | None
+    top_p: float | None
+    max_sentences_per_chunk: int | None
+    normalize_db: float | None
+    response_format: str
+    postprocess: PresetPostprocess | None
+    ignored_knobs: tuple[str, ...] = ()
+    effective_overrides: Mapping[str, str] = field(default_factory=dict)
+
+
+def _format_value(value: object) -> str:
+    """Render a resolved field value for the ``X-Preset-Effective`` header."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _format_preset_effective_header(cfg: EffectiveSynthesisConfig) -> str:
+    """Format ``X-Preset-Effective: <name>(field=value,...)`` per FR-PR-08.
+
+    Lists the resolved effective config in a deterministic, key-sorted
+    order so operators see a stable shape across requests.
+    """
+    parts: list[tuple[str, object]] = []
+    if cfg.provider is not None:
+        parts.append(("provider", cfg.provider))
+    if cfg.model is not None:
+        parts.append(("model", cfg.model))
+    if cfg.temperature is not None:
+        parts.append(("temperature", cfg.temperature))
+    if cfg.top_p is not None:
+        parts.append(("top_p", cfg.top_p))
+    if cfg.max_sentences_per_chunk is not None:
+        parts.append(("max_sentences_per_chunk", cfg.max_sentences_per_chunk))
+    if cfg.normalize_db is not None:
+        parts.append(("normalize_db", cfg.normalize_db))
+    parts.append(("response_format", cfg.response_format))
+    body = ",".join(f"{k}={_format_value(v)}" for k, v in sorted(parts, key=lambda kv: kv[0]))
+    return f"{cfg.preset_name}({body})"
+
+
+def resolve_preset(
+    request: SynthesizeRequest,
+    snapshot: PresetRegistry,
+    settings: Settings,
+) -> EffectiveSynthesisConfig:
+    """Resolve preset + request overrides into a frozen synthesis config (S-028 T3).
+
+    Pure: reads only the three explicit arguments — never ``app.state``.
+    The ``snapshot`` is captured at request-start by the caller (S-029
+    request-scoped semantic per NFR-PR-04). Precedence is per BR-10:
+
+        explicit request field > preset defaults > Settings/VoiceRecord defaults
+
+    Unknown preset name raises ``validation_error.preset_unknown`` (FR-PR-07).
+    Conflicts between explicit fields and preset pins are recorded in
+    ``effective_overrides`` and logged at WARN (FR-PR-08). Knobs the
+    active pipeline cannot honor are appended to ``ignored_knobs`` (BR-17 /
+    FR-PR-09).
+    """
+    name = request.preset if request.preset is not None else settings.tts_default_preset
+    entry = snapshot.get(name)
+    if entry is None:
+        available = sorted(snapshot.names())
+        raise OpenAIHTTPException(
+            status_code=400,
+            error=OpenAIError(
+                message=(f"unknown preset {name!r}; available presets: {available}"),
+                type="validation_error",
+                code="preset_unknown",
+                param="preset",
+            ),
+        )
+
+    defaults = entry.defaults
+    overrides: dict[str, str] = {}
+    ignored: list[str] = []
+    request_id = current_request_id()
+
+    def _pick(field_name: str, explicit: _T | None, preset_value: _T | None) -> _T | None:
+        if explicit is not None and preset_value is not None and explicit != preset_value:
+            logger.warning(
+                "preset override | request_id=%s preset=%s field=%s explicit=%r preset=%r",
+                request_id,
+                name,
+                field_name,
+                explicit,
+                preset_value,
+            )
+            overrides[field_name] = _format_value(explicit)
+            return explicit
+        if explicit is not None:
+            return explicit
+        return preset_value
+
+    provider = _pick("provider", request.provider, defaults.provider)
+    model = _pick("model", request.model, defaults.model)
+    temperature = _pick("temperature", request.temperature, defaults.temperature)
+    top_p = _pick("top_p", request.top_p, defaults.top_p)
+    max_sentences_per_chunk = _pick(
+        "max_sentences_per_chunk",
+        request.max_sentences_per_chunk,
+        defaults.max_sentences_per_chunk,
+    )
+    normalize_db = _pick("normalize_db", request.normalize_db, defaults.normalize_db)
+
+    # ``response_format`` on the rich request is currently ``Literal["wav"]``
+    # with default ``"wav"`` — we cannot distinguish operator-explicit
+    # ``"wav"`` from the Pydantic default, so the preset's ``response_format``
+    # is the source of truth when set. Soft-ignore preset formats the rich
+    # pipeline does not yet support (S-033 extends this set).
+    resolved_format = (
+        defaults.response_format
+        if defaults.response_format is not None
+        else request.response_format
+    )
+    if resolved_format not in _PIPELINE_SUPPORTED_FORMATS:
+        ignored.append("response_format")
+
+    return EffectiveSynthesisConfig(
+        preset_name=name,
+        provider=provider,
+        model=model,
+        temperature=temperature,
+        top_p=top_p,
+        max_sentences_per_chunk=max_sentences_per_chunk,
+        normalize_db=normalize_db,
+        response_format=resolved_format,
+        postprocess=defaults.postprocess,
+        ignored_knobs=tuple(ignored),
+        effective_overrides=overrides,
+    )
 
 
 def _build_synthesis_request(
@@ -390,6 +552,20 @@ async def synthesize_core(
         raise invalid_request("voice is required", param="voice", code="voice_required")
     voice_id = payload.voice.strip()
 
+    # S-028 — resolve preset once at the top so the EffectiveSynthesisConfig
+    # is the single source of truth for the rest of the pipeline. Snapshot
+    # is captured from app.state at request-start per FR-PR-11 / NFR-PR-04
+    # (S-029 generalizes the snapshot capture; until then this read is
+    # request-scoped because lifespan-only mutation is the current
+    # invariant). The resolver is pure — it never reads ``request.app``.
+    preset_registry: PresetRegistry = request.app.state.preset_registry
+    effective = resolve_preset(payload, preset_registry, settings)
+    preset_headers: dict[str, str] = {
+        "X-Preset-Effective": _format_preset_effective_header(effective),
+    }
+    if effective.ignored_knobs:
+        preset_headers["X-Preset-Ignored-Knobs"] = ",".join(effective.ignored_knobs)
+
     input_text = payload.input
     if not input_text or not input_text.strip():
         raise invalid_request("input is required", param="input")
@@ -444,6 +620,7 @@ async def synthesize_core(
                 device_profile=device_profile,
                 record=record,
             )
+            stream_headers.update(preset_headers)
             generator = _stream_synthesis_chunks(
                 provider_strategy=provider_strategy,
                 provider_name=provider_name,
@@ -492,6 +669,7 @@ async def synthesize_core(
             chunks=len(chunk_wavs),
             duration_ms=duration_ms,
         )
+        headers.update(preset_headers)
         return Response(content=merged, media_type="audio/wav", headers=headers)
 
     except OpenAIHTTPException:

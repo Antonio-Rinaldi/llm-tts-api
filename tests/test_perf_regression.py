@@ -191,6 +191,23 @@ def health_smoke_client() -> Iterator[tuple[TestClient, _PacedFakeProvider]]:
         app.state.concurrency_semaphore = concurrency_sem
         app.state.queue_semaphore = queue_sem
         app.state.model_locks = {}
+        # S-028 — synthesize_core reads ``app.state.preset_registry``.
+        from llm_tts_api.services.presets.config import (
+            PresetDefaults,
+            PresetEntry,
+            PresetRegistry,
+        )
+
+        service.settings.tts_default_preset = "balanced"
+        app.state.preset_registry = PresetRegistry(
+            _presets={
+                "balanced": PresetEntry(
+                    label="Balanced",
+                    description="stub",
+                    defaults=PresetDefaults(),
+                ),
+            }
+        )
 
         from llm_tts_api.dependencies import get_tts_service
 

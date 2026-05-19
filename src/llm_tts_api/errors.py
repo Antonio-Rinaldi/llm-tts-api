@@ -71,6 +71,7 @@ ERROR_CODES: Final[dict[ErrorCategory, frozenset[str]]] = {
             "unknown_model",
             "voice_reference_missing",
             "not_implemented",
+            "preset_unknown",
         }
     ),
     "voice_error": frozenset(

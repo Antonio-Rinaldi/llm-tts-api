@@ -328,6 +328,7 @@ without changing the categories):
 | `validation_error`  | `unknown_model`                 | Model not in the active provider's allow-list.                        |
 | `validation_error`  | `voice_reference_missing`       | Resolved voice has no reference audio on disk.                        |
 | `validation_error`  | `not_implemented`               | 501 stub endpoint hit (chat / realtime / transcriptions / translations). |
+| `validation_error`  | `preset_unknown`                | Request `preset` name not in the loaded preset registry (FR-PR-07).   |
 | `voice_error`       | `voice_not_found`               | Voice CRUD: id does not exist in the metadata repo.                   |
 | `voice_error`       | `voice_blob_missing`            | Voice CRUD: metadata exists but the blob is absent.                   |
 | `provider_error`    | `model_load_failed`             | Provider failed to load a model.                                      |
