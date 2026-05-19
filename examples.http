@@ -1,117 +1,256 @@
+# llm-tts-api — request examples
+#
+# This file is in VS Code REST Client / JetBrains HTTP Client format.
+# Install the "REST Client" extension (humao.rest-client) in VS Code, then
+# click "Send Request" above any `###` block. The server must be running
+# (see README "Quick Start"). Adjust @baseUrl if you bound a non-default port.
+#
+# Cycle-2 surface covered below (post-HF-2 + post-HF-3):
+#   * Audio presets (fast / balanced / quality, plus precedence demo).
+#   * Voice-cloning roundtrip via the voice store (POST → use → DELETE).
+#   * OpenAI-compatible /v1/audio/speech (uses TTS_DEFAULT_PRESET).
+#   * Liveness/readiness + catalog probes.
+#
+# Out of scope: postproc tuning (S-031), wav24/flac end-to-end (S-033),
+# quality-stream downgrade (S-032). Those surfaces will land in S-036.
+
 @baseUrl = http://localhost:8000
 
-### Health
+###############################################################################
+# Health & liveness (FR-HL-01, FR-HL-02)
+###############################################################################
+
+### Liveness — lock-free; always 200 once the ASGI worker is up.
 GET {{baseUrl}}/health
 
-### Ready
+### Readiness — 200 only after warmup + seed ingestion complete.
+# Flips to 503 during shutdown drain with reason="draining".
 GET {{baseUrl}}/ready
 
-### Models
+###############################################################################
+# Catalog probes
+###############################################################################
+
+### Model catalog (OpenAI-compatible). Per FR-PR-12 this does NOT enumerate presets.
 GET {{baseUrl}}/v1/models
 
-### Speech (success path requires valid env voice map + existing ref audio path)
+### Voice catalog (FR-VS-06). Returns seeds + CRUD voices.
+GET {{baseUrl}}/v1/tts/voices
+
+###############################################################################
+# Basic synthesis with the default preset
+#
+# When `preset` is omitted, the server resolves `TTS_DEFAULT_PRESET` (ships
+# as "balanced"). Response always carries `X-Preset-Effective`; the rich
+# endpoint also carries `X-Provider`, `X-Model`, `X-Device`, `X-Dtype`,
+# `X-Voice-Source`, `X-Voice-Id`, `X-Chunks`, `X-Total-Duration-Ms`.
+###############################################################################
+
+### Buffered synthesis (default preset, default response_format=wav)
+POST {{baseUrl}}/v1/tts/synthesize
+Content-Type: application/json
+Accept: audio/wav
+
+{
+  "input": "Buongiorno, oggi vi racconto una storia.",
+  "voice": "gold",
+  "stream": false
+}
+# Expected response headers include:
+#   X-Preset-Effective: balanced(max_sentences_per_chunk=2,normalize_db=-20.0,response_format=wav,temperature=0.8,top_p=0.95)
+
+###############################################################################
+# Synthesis with an explicit preset
+#
+# The "quality" preset pins provider="mlx_audio" + model="Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+# + language="en" + response_format="flac". Because the rich pipeline only
+# emits WAV today (S-033 pending), `response_format` is soft-ignored and
+# reported via `X-Preset-Ignored-Knobs`.
+###############################################################################
+
+### Quality preset, buffered (audiobook-style chapter)
+POST {{baseUrl}}/v1/tts/synthesize
+Content-Type: application/json
+Accept: audio/wav
+
+{
+  "input": "Capitolo primo. In una bella giornata di primavera, il sole splendeva alto nel cielo.",
+  "voice": "gold",
+  "preset": "quality",
+  "stream": false
+}
+# Expected response headers include:
+#   X-Preset-Effective: quality(language=en,max_sentences_per_chunk=3,model=Qwen/Qwen3-TTS-12Hz-0.6B-Base,normalize_db=-20.0,provider=mlx_audio,response_format=flac,temperature=0.8,top_p=0.95)
+#   X-Preset-Ignored-Knobs: response_format
+
+###############################################################################
+# Precedence demo — explicit field overrides preset (BR-10)
+#
+# We pick the "quality" preset (which pins language="en") and override
+# `language="it"` on the request. The resolver logs a WARN line about the
+# override and records it in `X-Preset-Effective` so the client sees what
+# actually ran.
+###############################################################################
+
+### Quality preset + explicit language override (Italian)
+POST {{baseUrl}}/v1/tts/synthesize
+Content-Type: application/json
+Accept: audio/wav
+
+{
+  "input": "Il 15/04/2026 abbiamo 2 appuntamenti importanti in agenda.",
+  "voice": "gold",
+  "preset": "quality",
+  "language": "it",
+  "stream": false
+}
+# Expected response headers include:
+#   X-Preset-Effective: quality(language=it,max_sentences_per_chunk=3,model=Qwen/Qwen3-TTS-12Hz-0.6B-Base,normalize_db=-20.0,provider=mlx_audio,response_format=flac,temperature=0.8,top_p=0.95)
+#   X-Preset-Ignored-Knobs: response_format
+#
+# Server log line:
+#   preset override | request_id=... preset=quality field=language explicit='it' preset='en'
+
+###############################################################################
+# Unknown preset → 400 preset_unknown (FR-PR-07)
+###############################################################################
+
+### Unknown preset name (negative example)
+POST {{baseUrl}}/v1/tts/synthesize
+Content-Type: application/json
+Accept: audio/wav
+
+{
+  "input": "Test",
+  "voice": "gold",
+  "preset": "not-a-real-preset"
+}
+# Expected:
+#   400 with envelope { error: { type: "validation_error", code: "preset_unknown", param: "preset",
+#                                message: "unknown preset 'not-a-real-preset'; available presets: ['balanced', 'fast', 'quality']" } }
+#   X-Error-Code: preset_unknown
+
+###############################################################################
+# Voice-cloning roundtrip (S-022 .. S-025)
+#
+# Three steps: register a voice via multipart POST, synthesize using its id,
+# then delete it. The cycle-1 inline `ref_audio` field is GONE — the voice
+# store is the only canonical source of reference audio.
+#
+# Replace ./samples/gold.wav below with a real reference clip (3–10s mono
+# WAV @ 24kHz works well; see README "Voice map").
+###############################################################################
+
+### Step 1 — register a cloned voice (multipart)
+POST {{baseUrl}}/v1/tts/voices
+Content-Type: multipart/form-data; boundary=BOUNDARY
+
+--BOUNDARY
+Content-Disposition: form-data; name="metadata"
+Content-Type: application/json
+
+{"id":"voice_demo","transcript":"Ciao, questa è una voce di riferimento.","language":"Italian","number_lang":"it","consent_acknowledged":true,"temperature":0.8,"top_p":0.95,"target_db":-20.0,"max_sentences_per_chunk":2}
+--BOUNDARY
+Content-Disposition: form-data; name="audio"; filename="gold.wav"
+Content-Type: audio/wav
+
+< ./samples/gold.wav
+--BOUNDARY--
+
+### Step 2 — synthesize using the registered id
+POST {{baseUrl}}/v1/tts/synthesize
+Content-Type: application/json
+Accept: audio/wav
+
+{
+  "input": "Benvenuti a questo episodio sperimentale.",
+  "voice": "voice_demo",
+  "stream": false
+}
+
+### Step 3 — fetch the stored reference audio back (FR-VS-07b)
+GET {{baseUrl}}/v1/tts/voices/voice_demo/audio
+# Response carries X-Content-Sha256, X-Voice-Source, X-Voice-Id.
+
+### Step 4 — delete the voice (FR-VS-09)
+DELETE {{baseUrl}}/v1/tts/voices/voice_demo
+
+###############################################################################
+# OpenAI-compatible /v1/audio/speech
+#
+# Uses TTS_DEFAULT_PRESET on the server side (no `preset` field on the
+# OpenAI shape). The response is byte-identical to OpenAI's contract —
+# rich-only headers (`X-Provider`, `X-Model`, `X-Device`, `X-Dtype`,
+# `X-Voice-Source`, `X-Voice-Id`, `X-Chunks`, `X-Total-Duration-Ms`,
+# `X-Preset-Effective`, `X-Preset-Ignored-Knobs`) are stripped.
+###############################################################################
+
+### OpenAI adapter — buffered (Italian narration)
 POST {{baseUrl}}/v1/audio/speech
 Content-Type: application/json
+Accept: audio/wav
 
 {
   "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-  "provider": "qwen",
-  "input": "Ciao, questo è un test di sintesi vocale.",
-  "voice": "alloy",
+  "provider": "mlx_audio",
+  "voice": "gold",
+  "input": "Il 15/04/2026 abbiamo 2 appuntamenti.",
   "response_format": "wav"
 }
+# Expected response headers: X-Request-ID only (rich-only headers stripped).
 
-### Speech via Voxtral provider (requires local mlx-audio setup and allowed model)
-POST {{baseUrl}}/v1/audio/speech
+###############################################################################
+# Negative examples — error envelopes (HF-3 messaging)
+###############################################################################
+
+### Wrong "provider" value (model family used as provider) — HF-3 error guidance
+POST {{baseUrl}}/v1/tts/synthesize
 Content-Type: application/json
+Accept: audio/wav
 
 {
-  "model": "voxtral/mini-tts",
-  "provider": "voxtral",
-  "input": "Hello, this is a Voxtral test.",
-  "voice": "alloy",
-  "response_format": "wav"
+  "input": "Test",
+  "voice": "gold",
+  "provider": "qwen"
 }
+# Expected:
+#   400 with envelope { error: { type: "validation_error", code: "invalid_parameter", param: "provider",
+#                                message: "provider 'qwen' is not supported. Valid providers: mlx_audio, voxtral, vllm-omni.
+#                                          Note: 'qwen' refers to a model family, not a provider — use provider='mlx_audio'
+#                                          with the desired model (e.g. model='Qwen/Qwen3-TTS-12Hz-0.6B-Base')." } }
+#   X-Error-Code: invalid_parameter
 
-### Transcriptions (currently compatibility stub -> 501)
+### Missing voice (and the active preset does not supply one) → voice_required
+POST {{baseUrl}}/v1/tts/synthesize
+Content-Type: application/json
+Accept: audio/wav
+
+{
+  "input": "Test senza voce."
+}
+# Expected:
+#   400 with envelope { error: { type: "validation_error", code: "voice_required", param: "voice" } }
+#   X-Error-Code: voice_required
+#
+# Tip: a custom preset that sets `defaults.voice` lets clients omit `voice`
+# on the request (HF-2 / FR-PR-03). See README "Audio presets" for the
+# `audiobook_it` example.
+
+###############################################################################
+# 501-stub endpoints (URL-stable, kept for OpenAI SDK probing)
+###############################################################################
+
+### Transcriptions stub
 POST {{baseUrl}}/v1/audio/transcriptions
 
-### Translations (currently compatibility stub -> 501)
+### Translations stub
 POST {{baseUrl}}/v1/audio/translations
 
-### Create voice (stub -> 501)
-POST {{baseUrl}}/v1/audio/voices
-
-### List voice consents (stub -> 501)
-GET {{baseUrl}}/v1/audio/voice_consents
-
-### Create voice consent (stub -> 501)
-POST {{baseUrl}}/v1/audio/voice_consents
-
-### Retrieve voice consent (stub -> 501)
-GET {{baseUrl}}/v1/audio/voice_consents/cons_123
-
-### Update voice consent (stub -> 501)
-POST {{baseUrl}}/v1/audio/voice_consents/cons_123
-Content-Type: application/json
-
-{
-  "name": "Updated consent label"
-}
-
-### Delete voice consent (stub -> 501)
-DELETE {{baseUrl}}/v1/audio/voice_consents/cons_123
-
-### Create chat completion (stub -> 501)
+### Chat completions stub
 POST {{baseUrl}}/v1/chat/completions
 Content-Type: application/json
 
-{
-  "model": "gpt-4o-mini",
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ]
-}
+{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello"}]}
 
-### List chat completions (stub -> 501)
-GET {{baseUrl}}/v1/chat/completions
-
-### Retrieve chat completion (stub -> 501)
-GET {{baseUrl}}/v1/chat/completions/chatcmpl_123
-
-### Update chat completion (stub -> 501)
-POST {{baseUrl}}/v1/chat/completions/chatcmpl_123
-Content-Type: application/json
-
-{
-  "metadata": {
-    "label": "example"
-  }
-}
-
-### Delete chat completion (stub -> 501)
-DELETE {{baseUrl}}/v1/chat/completions/chatcmpl_123
-
-### List chat completion messages (stub -> 501)
-GET {{baseUrl}}/v1/chat/completions/chatcmpl_123/messages
-
-### Realtime client secrets (stub -> 501)
-POST {{baseUrl}}/v1/realtime/client_secrets
-
-### Realtime accept call (stub -> 501)
-POST {{baseUrl}}/v1/realtime/calls/call_123/accept
-
-### Realtime hangup call (stub -> 501)
-POST {{baseUrl}}/v1/realtime/calls/call_123/hangup
-
-### Realtime refer call (stub -> 501)
-POST {{baseUrl}}/v1/realtime/calls/call_123/refer
-
-### Realtime reject call (stub -> 501)
-POST {{baseUrl}}/v1/realtime/calls/call_123/reject
-
-### Realtime sessions (stub -> 501)
+### Realtime sessions stub
 POST {{baseUrl}}/v1/realtime/sessions
-
-### Realtime transcription sessions (stub -> 501)
-POST {{baseUrl}}/v1/realtime/transcription_sessions
