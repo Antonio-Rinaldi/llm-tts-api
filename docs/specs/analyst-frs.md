@@ -269,6 +269,80 @@ The legacy `voice_map.json` survives as an **ingestion seed**, not the runtime s
 
 ---
 
+### 4.14 Audio-Generation Presets (FR-PR) — *cycle 2*
+
+> Source: `docs/specs/requests/dual-mode-presets-request.md` (PO scoped decisions D1-D10 + BA challenge rounds resolving OQ-1..10).
+> Reference: `/Volumes/Coding/Projects/Applications/epub/llm-image-api/config/presets.json` shape.
+
+**FR-PR-01 (MUST)** — The service MUST load named audio-generation presets from `config/presets.json` at startup. Three presets MUST ship out of the box: `fast`, `balanced`, `quality`. Operators MAY add custom presets to the file.
+
+**FR-PR-02 (MUST)** — `config/presets.json` MUST be validated against a Pydantic `PresetConfig` model with `extra="forbid"` at startup. Validation failures MUST cause startup to exit non-zero with error code `config_error.presets_invalid` and a message identifying the offending field path (e.g. `presets.quality.defaults.temperature`).
+
+**FR-PR-03 (MUST)** — Each preset MUST carry a `label`, `description`, and `defaults` block. `defaults` MAY contain any subset of: `provider`, `model`, `temperature`, `top_p`, `max_sentences_per_chunk`, `normalize_db`, `response_format`, `postprocess` (object with `rms_normalize: bool`, `silence_trim: bool`, `denoise: bool`). Unspecified fields fall through to existing system defaults.
+
+**FR-PR-04 (MUST)** — `SynthesizeRequest` MUST accept an optional `preset: str` field. Pydantic-level type is `str` (NOT `Literal[...]`) so operator-added custom presets work without OpenAPI regeneration. Validation against the loaded preset registry happens in the resolver (FR-PR-06).
+
+**FR-PR-05 (MUST)** — The server-side default preset MUST be `balanced`. The default MUST be overridable via env var `TTS_DEFAULT_PRESET`. An invalid `TTS_DEFAULT_PRESET` value MUST cause startup failure (same tier as `config_error.presets_invalid`).
+
+**FR-PR-06 (MUST)** — Preset resolution MUST live in `services/synthesize_service.py` and produce a frozen `EffectiveSynthesisConfig` dataclass consumed by all downstream synthesis code. Resolution precedence (highest-priority wins per-field):
+1. Explicit field on the request body
+2. Preset's `defaults` block (preset named in request, or server default if omitted)
+3. `Settings` / `VoiceRecord` defaults
+
+**FR-PR-07 (MUST)** — When a request passes a `preset` name not present in the loaded registry, the service MUST return `400 validation_error.preset_unknown` with the available preset names listed in the error message.
+
+**FR-PR-08 (MUST)** — When an explicit request field contradicts a preset pin (e.g. preset pins `provider="voxtral"` and request body says `provider="mlx_audio"`), the explicit field MUST win. The conflict MUST be logged at WARN level with the request_id. The response MUST include header `X-Preset-Effective: <preset-name>(field=value,...)` listing the resolved effective config.
+
+**FR-PR-09 (MUST)** — When the active provider cannot honor a preset-supplied knob that is not a hard schema requirement (e.g. preset wants `temperature=0.5` but provider's `synthesize_chunks` ignores temperature), the request MUST succeed, the unsupported knobs MUST be soft-ignored, and the response MUST include header `X-Preset-Ignored-Knobs: knob1,knob2,...`. Postprocessing knobs run in the service-layer and are always honored regardless.
+
+**FR-PR-10 (MUST)** — `POST /v1/audio/speech` (OpenAI-compat path) MUST always use the server default preset. The OpenAI request body MUST NOT accept a `preset` field, and no query-string escape hatch is exposed. This preserves the S-018 byte-identity contract.
+
+**FR-PR-11 (SHOULD)** — `config/presets.json` SHOULD be hot-reloadable via the same `watchfiles` + polling-fallback primitive used for `voice_map.json` (S-011). In-flight requests MUST snapshot the preset registry at request-start and use that snapshot to completion (no mid-request preset changes).
+
+**FR-PR-12 (MUST)** — Custom operator-defined presets in `config/presets.json` are usable on `POST /v1/tts/synthesize` but MUST NOT be enumerated in `/v1/models` or in `docs/openapi/openapi.yaml`. The OpenAPI `preset` field MAY document the three built-ins as informational examples; type stays open-string at the schema level.
+
+**FR-PR-13 (MUST)** — A preset that pins a `(provider, model)` pair not present in any provider's allow-list MUST cause startup failure with error code `config_error.preset_provider_invalid`.
+
+---
+
+### 4.15 Audio Post-Processing (FR-PP) — *cycle 2*
+
+**FR-PP-01 (MUST)** — A new module `services/audio_postprocess.py` MUST expose a pure-function pipeline `postprocess_audio(audio: bytes, *, rms_normalize: bool, silence_trim: bool, denoise: bool, settings: Settings) -> bytes` operating on a fully-assembled WAV body.
+
+**FR-PP-02 (MUST)** — Pipeline ordering MUST be deterministic and documented: **denoise → silence_trim → rms_normalize**. Each step is a no-op when its flag is false. The ordering rationale (denoise removes noise that would otherwise inflate trim thresholds; trim removes leading/trailing silence; normalize sets final loudness) MUST be recorded as a code comment in the module.
+
+**FR-PP-03 (MUST)** — `rms_normalize` MUST target the dBFS value supplied via either the request's `normalize_db` field or the preset's `defaults.normalize_db`. Resolved value of `None` means the step is skipped even when the flag is true (no-op).
+
+**FR-PP-04 (MUST)** — `silence_trim` MUST remove leading + trailing silence below a configurable threshold (default `-50 dBFS`; tunable via `Settings.tts_silence_trim_threshold_db`). MUST preserve at least a small head/tail pad (default 50 ms) so playback doesn't sound clipped.
+
+**FR-PP-05 (SHOULD)** — `denoise` MUST be implemented behind an optional dependency extra `[denoise]` (analogous to `[postgres]` / `[s3]` from Sprint 3). When the extra is not installed, `denoise=true` in a request or preset MUST log a WARN-level message and silently no-op (NOT a request error — operator's choice to deploy without the extra is honored).
+
+**FR-PP-06 (MUST)** — When any post-processing step runs (any of the three flags is effectively true), the response header `X-Postprocess-Applied` MUST list the applied steps (e.g. `X-Postprocess-Applied: silence_trim,rms_normalize`). Absent when no post-processing ran.
+
+**FR-PP-07 (MUST)** — If `preset="quality"` AND `stream=true` are both present on a request, the service MUST silently downgrade to buffered mode, run the full post-processing pipeline, and return a non-streaming response. The downgrade MUST be observable: response header `X-Stream-Downgraded: quality-postproc` MUST be set; no streaming trailers are emitted.
+
+**FR-PP-08 (MUST)** — Post-processing MUST run AFTER provider chunk assembly and BEFORE response encoding (the format conversion step). The insertion point in `synthesize_service.py` is the same wall the streaming-vs-buffered branch lives on.
+
+---
+
+### 4.16 Response Format Extension (FR-FMT) — *cycle 2*
+
+**FR-FMT-01 (MUST)** — `SynthesizeRequest.response_format` MUST be extended from `Literal["wav"]` to `Literal["wav", "wav24", "flac"]`. `wav` = 16-bit PCM (existing); `wav24` = 24-bit PCM; `flac` = FLAC lossless compressed.
+
+**FR-FMT-02 (MUST)** — Each `TTSProviderStrategy` MUST declare a `supported_response_formats: set[Literal["wav", "wav24", "flac"]]` capability (analogous to S-006's `supports_devices`). The mlx_audio / voxtral / vllm_omni providers' day-one declarations MUST be measured (not assumed) before this cycle merges.
+
+**FR-FMT-03 (MUST)** — When a request explicitly sets `response_format` to a value the active provider does NOT declare in `supported_response_formats`, the service MUST return `400 validation_error.format_unsupported` with the supported set in the error message (`message: "Provider 'voxtral' supports only: wav, wav24. Requested: flac"`).
+
+**FR-FMT-04 (MUST)** — When a preset pins a `response_format` not supported by the provider that startup auto-selection would pick, the service MUST refuse to start with `config_error.preset_provider_invalid` (FR-PR-13). Preset+format mismatch is a deployment-time error, not a runtime one.
+
+**FR-FMT-05 (MUST)** — The `quality` preset's default `response_format` MUST be `flac`. The `fast` and `balanced` presets' defaults MUST remain `wav` (so existing /v1/audio/speech callers see no format change).
+
+**FR-FMT-06 (MUST)** — Format conversion MUST occur in the service-layer (`services/synthesize_service.py`), AFTER post-processing (FR-PP-08), using `soundfile` (already a project dep) for FLAC and 24-bit WAV. The provider's native output (typically 16-bit WAV) is the canonical intermediate; conversion is one-way.
+
+**FR-FMT-07 (MUST)** — Response `Content-Type` MUST match the resolved `response_format`: `audio/wav` for `wav` and `wav24`; `audio/flac` for `flac`.
+
+---
+
 ## 5. Business Rules
 
 | ID | Rule |
@@ -282,6 +356,14 @@ The legacy `voice_map.json` survives as an **ingestion seed**, not the runtime s
 | BR-7 | A configured but currently-incompatible env override (e.g. `TTS_PROVIDER=vllm_omni` on Apple Silicon CPU-only host) is a startup error, not a runtime error. |
 | BR-8 | Synthesis-time temp files derived from a voice blob are deleted in `finally`, regardless of exception class. Voice records themselves persist in the store until explicit DELETE. |
 | BR-9 | The OpenAI adapter never reads or writes private state of the rich-endpoint service layer — only the public request/response surface. |
+| BR-10 (*cycle 2*) | Preset resolution precedence is **explicit request field > preset defaults > Settings/VoiceRecord defaults**. The first-set-wins layer is captured in `EffectiveSynthesisConfig`. |
+| BR-11 (*cycle 2*) | Hot-reload of `config/presets.json` never affects in-flight requests; they finish on the preset registry snapshot taken at request-start. |
+| BR-12 (*cycle 2*) | `POST /v1/audio/speech` ignores any `preset` field in the body (rejected by `SpeechRequest.extra="forbid"`) AND any `?preset=` query string (no escape hatch). It always resolves to `TTS_DEFAULT_PRESET`. |
+| BR-13 (*cycle 2*) | Quality preset + `stream=true` silently downgrades to buffered. The downgrade is observable via response header `X-Stream-Downgraded: quality-postproc`, not via error. |
+| BR-14 (*cycle 2*) | Post-processing pipeline order is **denoise → silence_trim → rms_normalize**. Each step is a no-op when its flag is false. |
+| BR-15 (*cycle 2*) | Format conversion runs in the service layer AFTER post-processing AND AFTER the provider's native (typically WAV16) output is assembled. Provider native format is the canonical intermediate. |
+| BR-16 (*cycle 2*) | Preset-pinned `(provider, model, response_format)` mismatches with auto-selected provider's capabilities are **startup-fail** errors (`config_error.preset_provider_invalid`), not runtime errors. |
+| BR-17 (*cycle 2*) | Soft-ignore of unsupported preset knobs (per provider) is reported via `X-Preset-Ignored-Knobs` response header. Service-layer-driven knobs (postprocess, format conversion) are NEVER soft-ignored. |
 
 ---
 
@@ -315,17 +397,36 @@ The following stay 501-stubbed but are captured here for follow-up cycles. Each 
 | A-3 | `watchfiles` works reliably inside the Docker container on a bind-mounted config dir. | FR-VM-02 may need a polling fallback for container deployments. |
 | A-4 | Trailing response headers are usable by the typical clients of this API (chunked transfer trailers). | FR-EP-05 may degrade to omitting `X-Chunks`/`X-Total-Duration-Ms` on streamed responses entirely. |
 | A-5 | All current providers can run with `anyio.to_thread.run_sync` without losing their existing concurrency guarantees. | FR-CC-02 may need provider-specific exceptions. |
+| A-PR-1 (*cycle 2*) | Operators ship `balanced` preset defaults that match cycle-1 defaults (`temperature=null`, `top_p=null`, `max_sentences_per_chunk=null`, `normalize_db=null`, `response_format="wav"`) — otherwise existing /v1/audio/speech callers see a behavior change. Documented as a migration note. | UAT-PR-06 byte-identity verifies post-deploy; cycle-1 S-018 paired UAT must still pass with default config. |
+| A-PR-2 (*cycle 2*) | `soundfile` (already a project dep) supports writing 24-bit WAV (`subtype="PCM_24"`) and FLAC end-to-end on all supported platforms. | FR-FMT-06 falls back to a different encoder dependency if soundfile coverage proves incomplete. |
+| A-PR-3 (*cycle 2*) | Each provider's `synthesize_chunks` can be inspected to determine which knobs it accepts (`temperature`, `top_p`, etc.) without invasive provider refactor. | FR-PR-09 soft-ignore matrix would need a provider-side declaration if reflection is too brittle. |
+| A-PR-4 (*cycle 2*) | The `watchfiles` watcher primitive from S-011 generalizes to additional config files (presets.json) without rewriting it. | FR-PR-11 would need a separate watcher implementation otherwise. |
 
 ---
 
 ## 8. Open Questions
 
+### Cycle 1 open questions (status as of cycle close)
 | ID | Question | Blocks |
 |---|---|---|
 | OQ-1 | Is there an acceptable CPU-viable TTS provider already on the table for future work, or does CPU-only deployment remain unsupported indefinitely? | Roadmap prioritization (not this cycle). |
 | OQ-2 | Should `GET /v1/voices` (FR-VM-05) be paginated or expose tags/categories for large voice maps? | FR-VM-05 schema final shape. |
 | ~~OQ-3~~ | **RESOLVED:** voice CRUD with pluggable backends; multipart-only on create/update. See FR-VS. | — |
 | OQ-4 | Coverage threshold 80% — applied to whole codebase from day one, or ratchet from current → 80%? | CI configuration step. |
+
+### Cycle 2 open questions (all RESOLVED in BA challenge rounds — recorded for trace)
+| ID | Question | Resolution |
+|---|---|---|
+| ~~CY2-OQ-1~~ | Denoise — in cycle, deferred, or feature-flagged? | **Feature-flagged via `[denoise]` extra.** See FR-PP-05. |
+| ~~CY2-OQ-2~~ | Quality preset's default `response_format`? | **`flac`** (lossless compressed). See FR-FMT-05. |
+| ~~CY2-OQ-3~~ | Per-provider format capability — how declared? | **`supported_response_formats: set[str]` on each provider.** See FR-FMT-02. |
+| ~~CY2-OQ-4~~ | `presets.json` hot-reload semantics? | **`watchfiles` + polling fallback; in-flight snapshot at request-start.** See FR-PR-11. |
+| ~~CY2-OQ-5~~ | `presets.json` schema validation approach? | **Pydantic `PresetConfig` model with `extra="forbid"`.** See FR-PR-02. |
+| ~~CY2-OQ-6~~ | Per-preset perf SLO assertions? | **Soft documentation only; no hard SLO test gates.** Captured in NFR by writer. |
+| ~~CY2-OQ-7~~ | Custom operator preset lifecycle in `/v1/models` / OpenAPI? | **Usable, NOT enumerated.** See FR-PR-12. |
+| ~~CY2-OQ-8~~ | Backward compat for existing callers? | **Unchanged behavior; `balanced` preset is operator-tunable for exact byte-compat.** See A-PR-1. |
+| ~~CY2-OQ-9~~ | Provider that can't honor a preset knob? | **Soft-ignore + `X-Preset-Ignored-Knobs` header.** See FR-PR-09. |
+| ~~CY2-OQ-10~~ | Preset resolution layering? | **In `services/synthesize_service.py`; produces frozen `EffectiveSynthesisConfig`.** See FR-PR-06. |
 
 ---
 
@@ -346,3 +447,6 @@ The following stay 501-stubbed but are captured here for follow-up cycles. Each 
 | Error model (FR-ER) | §3 item 9, Round 2 |
 | Quality gates (FR-QG) | §3 items 14–16 |
 | Documentation (FR-DC) | §3 item 19, §6 success criteria |
+| **Audio-generation presets (FR-PR)** *cycle 2* | `requests/dual-mode-presets-request.md` §2 G1-G3, D1-D5, D9-D10; BA Round 1 OQ-1..3, Round 2 OQ-4/5/7, Round 3 OQ-8/10 |
+| **Audio post-processing (FR-PP)** *cycle 2* | `requests/dual-mode-presets-request.md` §2 G4, G6, D6, D8; BA Round 1 OQ-1, Round 3 OQ-9 |
+| **Format extension (FR-FMT)** *cycle 2* | `requests/dual-mode-presets-request.md` §2 G5, D7; BA Round 1 OQ-2/3 |

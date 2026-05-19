@@ -417,6 +417,166 @@ Test environment assumptions: Apple Silicon dev box for primary path; CUDA host 
 
 ---
 
+## UAT-PR — Audio-Generation Presets (*cycle 2*)
+
+### UAT-PR-01 (Happy path) — Default preset applies when client omits `preset`
+**Preconditions:** `config/presets.json` shipped with default `balanced` preset.
+**Steps:** `POST /v1/tts/synthesize` with `{"input":"Hello world.","voice":"alloy"}` (no `preset`).
+**Expected:** 200 OK; response header `X-Preset-Effective: balanced(...)` present; audio body non-empty.
+**Trace:** FR-PR-05, FR-PR-06, FR-PR-08.
+
+### UAT-PR-02 (Happy path) — Named preset applies its defaults
+**Steps:** Same request body with `"preset":"quality"` and `"stream":false`.
+**Expected:** 200 OK; `X-Preset-Effective: quality(...)` lists the quality preset's resolved fields; `Content-Type: audio/flac` (per FR-FMT-05); body is FLAC bytes.
+**Trace:** FR-PR-03, FR-PR-06, FR-PR-08, FR-FMT-05.
+
+### UAT-PR-03 (Negative) — Unknown preset returns 400 preset_unknown
+**Steps:** Request with `"preset":"cinematic"` and no such preset configured.
+**Expected:** 400 `validation_error.preset_unknown`; error message lists the available preset names.
+**Trace:** FR-PR-07.
+
+### UAT-PR-04 (Conflict) — Explicit field overrides preset pin; warning logged
+**Preconditions:** `quality` preset pins `provider="voxtral"` in `config/presets.json`.
+**Steps:** Request `{"input":"...","voice":"alloy","preset":"quality","provider":"mlx_audio"}`.
+**Expected:** 200 OK; `X-Preset-Effective` shows `provider=mlx_audio`; log line at WARN level with request_id and the override reason.
+**Trace:** FR-PR-06, FR-PR-08.
+
+### UAT-PR-05 (Soft-ignore) — Provider can't honor a preset knob; ignored knobs surfaced
+**Preconditions:** Preset's `defaults.temperature=0.5`; the active provider's `synthesize_chunks` does not accept temperature.
+**Steps:** Request with `preset` whose defaults include unsupported knob.
+**Expected:** 200 OK; response header `X-Preset-Ignored-Knobs: temperature`; request succeeds.
+**Trace:** FR-PR-09.
+
+### UAT-PR-06 (Compat) — `/v1/audio/speech` always uses server default preset
+**Preconditions:** `TTS_DEFAULT_PRESET=balanced`.
+**Steps:** OpenAI-shaped `POST /v1/audio/speech` request (no `preset` field allowed in body).
+**Expected:** 200 OK; the response body bytes are byte-identical to a `POST /v1/tts/synthesize` request with the equivalent input AND `preset="balanced"` (extends the S-018 paired UAT). Headers on the OpenAI path still strip `X-Preset-Effective` etc. per S-017 contract.
+**Trace:** FR-PR-10.
+
+### UAT-PR-07 (Negative) — Extra `preset` field on OpenAI request is rejected
+**Steps:** `POST /v1/audio/speech` with `{"model":"...","input":"...","voice":"alloy","preset":"fast"}`.
+**Expected:** 422 schema validation error (`SpeechRequest` has `extra="forbid"`); preserves OpenAI byte-identity.
+**Trace:** FR-PR-10.
+
+### UAT-PR-08 (Hot-reload) — presets.json change picked up within poll interval
+**Preconditions:** Service running with `config/presets.json` loaded; in-flight synthesis NOT active.
+**Steps:** Edit `presets.json` to add a new `cinematic` preset; wait ≤ 2 s; issue request with `"preset":"cinematic"`.
+**Expected:** 200 OK; preset resolves; no service restart required.
+**Trace:** FR-PR-11.
+
+### UAT-PR-09 (Snapshot) — In-flight request unaffected by mid-flight reload
+**Preconditions:** Long-running quality-preset request in flight.
+**Steps:** Edit presets.json to remove the `quality` preset while the request is mid-flight.
+**Expected:** In-flight request completes successfully using the snapshot taken at request-start. Subsequent requests with `preset="quality"` return 400 `preset_unknown`.
+**Trace:** FR-PR-11.
+
+### UAT-PR-10 (Custom preset NOT in OpenAPI) — Operator preset works but isn't enumerated
+**Preconditions:** `config/presets.json` has a custom `cinematic` preset.
+**Steps:** (a) Request with `preset="cinematic"`. (b) `GET /v1/models`. (c) Read `docs/openapi/openapi.yaml`.
+**Expected:** (a) 200 OK. (b) `/v1/models` response does NOT include preset names anywhere. (c) OpenAPI's `preset` field type is `string`; the spec MAY mention `fast/balanced/quality` as informational examples; `cinematic` is NOT mentioned anywhere in the YAML.
+**Trace:** FR-PR-12.
+
+### UAT-PR-11 (Startup-fail) — Invalid presets.json fails fast
+**Preconditions:** `config/presets.json` has `presets.fast.defaults.temperature = "not-a-number"`.
+**Steps:** Start the service.
+**Expected:** Process exits non-zero; stderr includes `config_error.presets_invalid` with path `presets.fast.defaults.temperature`. No HTTP socket bound.
+**Trace:** FR-PR-02.
+
+### UAT-PR-12 (Startup-fail) — Preset pins invalid (provider, model)
+**Preconditions:** `config/presets.json` has `presets.quality.defaults.model = "nonexistent-model"` not in any provider's allow-list.
+**Steps:** Start the service.
+**Expected:** Process exits non-zero with `config_error.preset_provider_invalid`. Error message names the offending preset + the unknown model.
+**Trace:** FR-PR-13.
+
+### UAT-PR-13 (Startup-fail) — TTS_DEFAULT_PRESET names an unknown preset
+**Preconditions:** `TTS_DEFAULT_PRESET=bogus` env var set; not in `config/presets.json`.
+**Steps:** Start the service.
+**Expected:** Process exits non-zero with `config_error.presets_invalid` (or a dedicated `config_error.default_preset_unknown` — analyst leaves error-code naming to implementation). Message names the offending env var.
+**Trace:** FR-PR-05.
+
+---
+
+## UAT-PP — Audio Post-Processing (*cycle 2*)
+
+### UAT-PP-01 (Happy path) — RMS normalize applied for quality preset
+**Preconditions:** `quality` preset has `defaults.postprocess.rms_normalize=true` and `defaults.normalize_db=-16.0`.
+**Steps:** Request with `preset="quality"`.
+**Expected:** Response header `X-Postprocess-Applied: rms_normalize` (or `silence_trim,rms_normalize` if trim also enabled); decoded audio's measured RMS ≈ -16 dBFS within ±0.5 dB tolerance.
+**Trace:** FR-PP-01, FR-PP-03, FR-PP-06.
+
+### UAT-PP-02 (Happy path) — Silence trim removes leading silence
+**Preconditions:** Provider output has ~1s leading silence on chosen voice.
+**Steps:** Request with `preset="quality"` (postprocess.silence_trim=true).
+**Expected:** Output audio's leading silence ≤ 100ms (50ms pad + ~50ms tolerance). `X-Postprocess-Applied` lists `silence_trim`.
+**Trace:** FR-PP-04, FR-PP-06.
+
+### UAT-PP-03 (Ordering) — Pipeline order is denoise → trim → normalize
+**Steps:** Code-level test or DEBUG log assertion: enable all three postproc flags; capture intermediate signal at each pipeline boundary; assert order in module comments and execution.
+**Expected:** Module docstring and code show the documented ordering; intermediate signals verify it.
+**Trace:** FR-PP-02.
+
+### UAT-PP-04 (Optional extra) — denoise=true without [denoise] extra logs WARN and no-ops
+**Preconditions:** Service installed WITHOUT the `[denoise]` extra; preset has `postprocess.denoise=true`.
+**Steps:** Request that triggers the preset.
+**Expected:** 200 OK; output audio not denoised; log line at WARN level mentioning the missing extra. `X-Postprocess-Applied` does NOT list `denoise`.
+**Trace:** FR-PP-05.
+
+### UAT-PP-05 (Header) — X-Postprocess-Applied absent when no postproc ran
+**Preconditions:** `fast` preset with all postproc flags false.
+**Steps:** Request with `preset="fast"`.
+**Expected:** 200 OK; `X-Postprocess-Applied` header is NOT set on the response.
+**Trace:** FR-PP-06.
+
+### UAT-PP-06 (Stream downgrade) — quality + stream=true → buffered with X-Stream-Downgraded
+**Steps:** `POST /v1/tts/synthesize` with `{"preset":"quality","stream":true,"input":"...","voice":"alloy"}`.
+**Expected:** 200 OK; response is buffered (no chunked transfer encoding, no trailers); response header `X-Stream-Downgraded: quality-postproc` set; full post-processing applied; `X-Postprocess-Applied` populated.
+**Trace:** FR-PP-07.
+
+### UAT-PP-07 (Insertion point) — Postproc runs after assembly, before format encoding
+**Steps:** Code-review assertion in `services/synthesize_service.py`: `postprocess_audio(...)` is called AFTER chunk assembly + BEFORE `soundfile`-based format conversion.
+**Expected:** Inspection of the function flow confirms ordering. Per-step LOG/test instrumentation may pin this; pure structural assertion otherwise.
+**Trace:** FR-PP-08.
+
+---
+
+## UAT-FMT — Response Format Extension (*cycle 2*)
+
+### UAT-FMT-01 (Happy path) — wav (16-bit) still works (regression)
+**Steps:** Request with `response_format="wav"` (explicit) or with the `fast`/`balanced` preset (default `wav`).
+**Expected:** 200 OK; `Content-Type: audio/wav`; body is 16-bit PCM WAV decodable by `wave` stdlib.
+**Trace:** FR-FMT-01, FR-FMT-05, FR-FMT-07.
+
+### UAT-FMT-02 (Happy path) — wav24 (24-bit) works on a supporting provider
+**Preconditions:** Active provider declares `wav24 ∈ supported_response_formats`.
+**Steps:** Request with `response_format="wav24"`.
+**Expected:** 200 OK; `Content-Type: audio/wav`; body decodes as 24-bit PCM WAV via `soundfile.read(...).dtype == 'int32' or 'float64'` (depending on soundfile coercion).
+**Trace:** FR-FMT-01, FR-FMT-06, FR-FMT-07.
+
+### UAT-FMT-03 (Happy path) — flac works; default for quality preset
+**Preconditions:** Active provider declares `flac ∈ supported_response_formats`.
+**Steps:** Request with `preset="quality"` (default `response_format=flac` per FR-FMT-05).
+**Expected:** 200 OK; `Content-Type: audio/flac`; body decodes via `soundfile.read(...)` and matches the equivalent WAV decode within sample-tolerance (lossless invariant).
+**Trace:** FR-FMT-05, FR-FMT-06, FR-FMT-07.
+
+### UAT-FMT-04 (Negative) — Unsupported format on active provider returns 400
+**Preconditions:** Active provider declares `supported_response_formats = {"wav"}` only.
+**Steps:** Request with `response_format="flac"`.
+**Expected:** 400 `validation_error.format_unsupported`; message lists the supported set (`"Provider 'X' supports only: wav. Requested: flac"`).
+**Trace:** FR-FMT-02, FR-FMT-03.
+
+### UAT-FMT-05 (Startup-fail) — Preset pins flac, auto-selected provider doesn't support
+**Preconditions:** `config/presets.json` quality preset has `defaults.response_format=flac`; on the deployed device, auto-selection picks a provider whose `supported_response_formats` excludes flac.
+**Steps:** Start the service.
+**Expected:** Process exits non-zero with `config_error.preset_provider_invalid` (per FR-FMT-04). Error message identifies the preset and the format mismatch.
+**Trace:** FR-FMT-04.
+
+### UAT-FMT-06 (Capability declaration) — Each provider exposes supported_response_formats
+**Steps:** Code-level / introspection check: each `TTSProviderStrategy` subclass exposes a non-empty `supported_response_formats: set[Literal["wav","wav24","flac"]]` attribute or method.
+**Expected:** mlx_audio, voxtral, vllm_omni providers each declare a measured (non-assumed) set. The day-one matrix is recorded in `docs/specs/software-spec.md` cycle-2 section.
+**Trace:** FR-FMT-02.
+
+---
+
 ## 10. Traceability Matrix (FR → UAT)
 
 | FR ID | UAT IDs |
@@ -440,10 +600,14 @@ Test environment assumptions: Apple Silicon dev box for primary path; CUDA host 
 | FR-ER-01..04 | UAT-ER-01, UAT-ER-02, UAT-OB-04 |
 | FR-QG-01..04 | UAT-QG-01 … UAT-QG-05 |
 | FR-DC-01..03 | UAT-DC-01 … UAT-DC-03 |
+| FR-PR-01..13 (*cycle 2*) | UAT-PR-01 … UAT-PR-13 |
+| FR-PP-01..08 (*cycle 2*) | UAT-PP-01 … UAT-PP-07 |
+| FR-FMT-01..07 (*cycle 2*) | UAT-FMT-01 … UAT-FMT-06 |
 
 ### Coverage gaps explicitly noted
 - **FR-OB-04** (Prometheus `/metrics`) — out of scope; no UAT.
 - **FR-VM-05 pagination** (OQ-2) — no UAT until shape is decided.
+- **FR-PR-09 multi-knob soft-ignore exhaustive matrix** — UAT-PR-05 covers the principle with one knob; an exhaustive provider-vs-knob matrix is left to the technical-writer's NFR-PT testing approach.
 
 ---
 
@@ -459,3 +623,7 @@ Test environment assumptions: Apple Silicon dev box for primary path; CUDA host 
 8. **Cache**: UAT-CA-01..03.
 9. **Observability & errors**: UAT-OB-01..04, UAT-ER-01..02, UAT-CF-01..03.
 10. **Doc review**: UAT-DC-01..03.
+11. **(*cycle 2*) Preset config validation**: UAT-PR-11..13 (startup-fail tier).
+12. **(*cycle 2*) Preset resolution**: UAT-PR-01..10 (runtime resolution + headers + hot-reload).
+13. **(*cycle 2*) Format extension**: UAT-FMT-01..06 (per-provider capability + 400 on mismatch).
+14. **(*cycle 2*) Post-processing**: UAT-PP-01..07 (per-step verification + stream downgrade).
