@@ -56,8 +56,20 @@ Accept: audio/wav
   "voice": "gold",
   "stream": false
 }
-# Expected response headers include:
-#   X-Preset-Effective: balanced(max_sentences_per_chunk=2,normalize_db=-20.0,response_format=wav,temperature=0.8,top_p=0.95)
+# Expected response headers include: #   X-Preset-Effective: balanced(max_sentences_per_chunk=2,normalize_db=-20.0, response_format=wav, temperature=0.8, top_p=0.95)
+
+
+### Quality preset, buffered (audiobook-style chapter)
+POST {{baseUrl}}/v1/tts/synthesize
+Content-Type: application/json
+Accept: audio/wav
+
+{
+  "input": "Capitolo primo. In una bella giornata di primavera, il sole splendeva alto nel cielo.",
+  "voice": "nova_chunk_3",
+  "preset": "fast",
+  "stream": false
+}
 
 ###############################################################################
 # Synthesis with an explicit preset
@@ -79,8 +91,7 @@ Accept: audio/wav
   "preset": "quality",
   "stream": false
 }
-# Expected response headers include:
-#   X-Preset-Effective: quality(language=en,max_sentences_per_chunk=3,model=Qwen/Qwen3-TTS-12Hz-0.6B-Base,normalize_db=-20.0,provider=mlx_audio,response_format=flac,temperature=0.8,top_p=0.95)
+# Expected response headers include: #   X-Preset-Effective: quality(language=en,max_sentences_per_chunk=3, model=Qwen/Qwen3-TTS-12Hz-0.6B-Base, normalize_db=-20.0, provider=mlx_audio, response_format=flac,temperature=0.8, top_p=0.95)
 #   X-Preset-Ignored-Knobs: response_format
 
 ###############################################################################
@@ -104,12 +115,10 @@ Accept: audio/wav
   "language": "it",
   "stream": false
 }
-# Expected response headers include:
-#   X-Preset-Effective: quality(language=it,max_sentences_per_chunk=3,model=Qwen/Qwen3-TTS-12Hz-0.6B-Base,normalize_db=-20.0,provider=mlx_audio,response_format=flac,temperature=0.8,top_p=0.95)
+# Expected response headers include: #   X-Preset-Effective: quality(language=it,max_sentences_per_chunk=3, model=Qwen/Qwen3-TTS-12Hz-0.6B-Base, normalize_db=-20.0, provider=mlx_audio, response_format=flac,temperature=0.8, top_p=0.95)
 #   X-Preset-Ignored-Knobs: response_format
 #
-# Server log line:
-#   preset override | request_id=... preset=quality field=language explicit='it' preset='en'
+# Server log line: #   preset override | request_id=... preset=quality field=language explicit='it' preset='en'
 
 ###############################################################################
 # Unknown preset → 400 preset_unknown (FR-PR-07)
@@ -125,9 +134,8 @@ Accept: audio/wav
   "voice": "gold",
   "preset": "not-a-real-preset"
 }
-# Expected:
-#   400 with envelope { error: { type: "validation_error", code: "preset_unknown", param: "preset",
-#                                message: "unknown preset 'not-a-real-preset'; available presets: ['balanced', 'fast', 'quality']" } }
+# Expected: #   400 with envelope {error: { type: "validation_error", code: "preset_unknown", param: "preset",
+#                                message: "unknown preset 'not-a-real-preset'; available presets: ['balanced', 'fast', 'quality']"}}
 #   X-Error-Code: preset_unknown
 
 ###############################################################################
@@ -213,8 +221,7 @@ Accept: audio/wav
   "voice": "gold",
   "provider": "qwen"
 }
-# Expected:
-#   400 with envelope { error: { type: "validation_error", code: "invalid_parameter", param: "provider",
+# Expected: #   400 with envelope {error: { type: "validation_error", code: "invalid_parameter", param: "provider",
 #                                message: "provider 'qwen' is not supported. Valid providers: mlx_audio, voxtral, vllm-omni.
 #                                          Note: 'qwen' refers to a model family, not a provider — use provider='mlx_audio'
 #                                          with the desired model (e.g. model='Qwen/Qwen3-TTS-12Hz-0.6B-Base')." } }
@@ -228,8 +235,7 @@ Accept: audio/wav
 {
   "input": "Test senza voce."
 }
-# Expected:
-#   400 with envelope { error: { type: "validation_error", code: "voice_required", param: "voice" } }
+# Expected: #   400 with envelope {error: { type: "validation_error", code: "voice_required", param: "voice"}}
 #   X-Error-Code: voice_required
 #
 # Tip: a custom preset that sets `defaults.voice` lets clients omit `voice`
@@ -250,7 +256,15 @@ POST {{baseUrl}}/v1/audio/translations
 POST {{baseUrl}}/v1/chat/completions
 Content-Type: application/json
 
-{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hello"}]}
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello"
+    }
+  ]
+}
 
 ### Realtime sessions stub
 POST {{baseUrl}}/v1/realtime/sessions
