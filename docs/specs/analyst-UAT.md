@@ -494,6 +494,29 @@ Test environment assumptions: Apple Silicon dev box for primary path; CUDA host 
 **Expected:** Process exits non-zero with `config_error.presets_invalid` (or a dedicated `config_error.default_preset_unknown` — analyst leaves error-code naming to implementation). Message names the offending env var.
 **Trace:** FR-PR-05.
 
+### UAT-PR-14 (Startup-fail) — presets.json is world-writable
+**Preconditions:** `config/presets.json` exists with mode `0666` (world-writable) OR ownership differs from the service user.
+**Steps:** Start the service.
+**Expected:** Process exits non-zero with `config_error.presets_unsafe_permissions`. Log line names the offending mode bits / owner uid mismatch.
+**Trace:** NFR-SE-09.
+
+### UAT-PR-15 (Reload) — Invalid presets.json at runtime is rejected; service stays on prior config
+**Preconditions:** Service running with valid `presets.json` loaded; `quality` preset present.
+**Steps:** Write an invalid `presets.json` (e.g. malformed JSON, or `presets.fast.defaults.temperature="oops"`). Wait ≤ 2 s. Issue request with `preset="quality"`.
+**Expected:** Reload notification fires; reloader validates new file; validation fails; in-memory registry NOT swapped; WARN log line records the rejection. The follow-up request succeeds against the prior `quality` preset. No service restart, no 5xx.
+**Trace:** NFR-SE-10.
+
+### UAT-PR-16 (Observability) — INFO log carries resolved preset state
+**Steps:** Issue a synthesis request with `preset="quality"` against an `app_log_format=json` deployment. Capture the INFO log line for the request.
+**Expected:** Log line contains JSON fields: `request_id`, `resolved_preset="quality"`, `ignored_knobs` (string, possibly empty), `postprocess_applied` (string, comma-separated steps), `response_format="flac"`, `stream_downgraded` (boolean). Log line is payload-free (NO `input` text, NO audio bytes).
+**Trace:** NFR-OP-06.
+
+### UAT-PR-17 (Regression) — S-018 byte-identity paired UAT passes byte-identically across cycle 2
+**Preconditions:** Cycle-2 master state; default `config/presets.json` shipped; `TTS_DEFAULT_PRESET=balanced`.
+**Steps:** Run `uv run pytest tests/test_openai_adapter_parity.py -v` (the existing S-018 paired UAT — NOT modified in cycle 2).
+**Expected:** All paired tests pass. sha256 of rich(`preset=balanced`, no overrides) body byte-equals sha256 of OpenAI-path body for the same effective request. The test file itself is byte-identical to its merged cycle-1 form (`git diff master tests/test_openai_adapter_parity.py` empty).
+**Trace:** NFR-PT-05.
+
 ---
 
 ## UAT-PP — Audio Post-Processing (*cycle 2*)
@@ -601,6 +624,10 @@ Test environment assumptions: Apple Silicon dev box for primary path; CUDA host 
 | FR-QG-01..04 | UAT-QG-01 … UAT-QG-05 |
 | FR-DC-01..03 | UAT-DC-01 … UAT-DC-03 |
 | FR-PR-01..13 (*cycle 2*) | UAT-PR-01 … UAT-PR-13 |
+| NFR-SE-09 (*cycle 2*) | UAT-PR-14 |
+| NFR-SE-10 (*cycle 2*) | UAT-PR-15 |
+| NFR-OP-06 (*cycle 2*) | UAT-PR-16 |
+| NFR-PT-05 (*cycle 2*) | UAT-PR-17 |
 | FR-PP-01..08 (*cycle 2*) | UAT-PP-01 … UAT-PP-07 |
 | FR-FMT-01..07 (*cycle 2*) | UAT-FMT-01 … UAT-FMT-06 |
 
