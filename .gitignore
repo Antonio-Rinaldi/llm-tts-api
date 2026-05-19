@@ -16,3 +16,4 @@ voices/
 .worktrees/
 docs/planning/sprints/.pending/
 .coverage
+/.env
