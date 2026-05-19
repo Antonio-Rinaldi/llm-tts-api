@@ -1,0 +1,50 @@
+{
+  "fast": {
+    "label": "Fast (low-TTFB interactive)",
+    "description": "Lowest TTFB. Smaller chunks and conservative sampling for interactive agents.",
+    "defaults": {
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "max_sentences_per_chunk": 1,
+      "normalize_db": -20.0,
+      "response_format": "wav",
+      "postprocess": {
+        "rms_normalize": false,
+        "silence_trim": false,
+        "denoise": false
+      }
+    }
+  },
+  "balanced": {
+    "label": "Balanced (default)",
+    "description": "Cycle-1 default behaviour. Operator-tunable for exact byte-compatibility (A-PR-1).",
+    "defaults": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "max_sentences_per_chunk": 2,
+      "normalize_db": -20.0,
+      "response_format": "wav",
+      "postprocess": {
+        "rms_normalize": false,
+        "silence_trim": false,
+        "denoise": false
+      }
+    }
+  },
+  "quality": {
+    "label": "Quality (buffered audiobook chapter)",
+    "description": "Higher-fidelity preset with full post-processing pipeline and FLAC output (buffered only).",
+    "defaults": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "max_sentences_per_chunk": 3,
+      "normalize_db": -20.0,
+      "response_format": "flac",
+      "postprocess": {
+        "rms_normalize": true,
+        "silence_trim": true,
+        "denoise": false
+      }
+    }
+  }
+}

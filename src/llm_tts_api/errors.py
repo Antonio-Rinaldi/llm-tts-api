@@ -40,7 +40,18 @@ ErrorCategory = Literal[
     "provider_error",
     "capacity_error",
     "internal_error",
+    "config_error",
 ]
+
+# S-027 — cycle-2 startup-fail error codes. These are NOT returned in an
+# HTTP envelope (they fire during the lifespan, before the socket is
+# bound); they are surfaced as strings in stderr / structured log lines
+# and verified by UAT-PR-11/12/14. Registered here so the taxonomy stays
+# in one place and future stories can grep the codes from a single
+# module.
+CONFIG_ERROR_PRESETS_INVALID: Final = "config_error.presets_invalid"
+CONFIG_ERROR_PRESET_PROVIDER_INVALID: Final = "config_error.preset_provider_invalid"
+CONFIG_ERROR_PRESETS_UNSAFE_PERMISSIONS: Final = "config_error.presets_unsafe_permissions"
 
 # Sub-code registry — documents codes used by Sprint-2 stories. Not a closed
 # set: the handler does not validate ``code`` against this registry. New
@@ -87,6 +98,13 @@ ERROR_CODES: Final[dict[ErrorCategory, frozenset[str]]] = {
     "internal_error": frozenset(
         {
             "unexpected_error",
+        }
+    ),
+    "config_error": frozenset(
+        {
+            "presets_invalid",
+            "preset_provider_invalid",
+            "presets_unsafe_permissions",
         }
     ),
 }

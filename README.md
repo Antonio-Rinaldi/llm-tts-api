@@ -265,6 +265,19 @@ asserts this list stays in sync with the code.
 - `TTS_REFAUDIO_MAX_BYTES` — per-upload audio cap (NFR-SE-01, default
   `10485760` = 10 MiB).
 
+### Audio-generation presets (S-027 / FR-PR — cycle 2)
+
+- `TTS_PRESETS_FILE` (default `config/presets.json`) — path to the JSON
+  registry of named presets loaded + validated at startup
+  (FR-PR-01 / FR-PR-02). Hot-reloaded by S-029.
+- `TTS_DEFAULT_PRESET` (default `balanced`) — preset applied when a
+  request omits `preset`. Must match one of the names defined in the
+  presets file or startup fails with `config_error.presets_invalid`
+  (FR-PR-05).
+- `TTS_SILENCE_TRIM_THRESHOLD_DB` (default `-50.0`) — dBFS floor used by
+  the `silence_trim` postprocess step (consumed by S-031). Declared
+  here so misconfiguration is rejected at `Settings.__post_init__`.
+
 ### Seed voice map (S-011 / FR-VM)
 
 - `TTS_VOICE_MAP_FILE` — path to the seed `voice_map.json`. Unset / missing
@@ -326,6 +339,9 @@ without changing the categories):
 | `capacity_error`    | `service_unavailable`           | Downstream backend (Postgres / S3) unavailable.                       |
 | `capacity_error`    | `timeout`                       | `TTS_INFERENCE_TIMEOUT_SECONDS` exceeded.                             |
 | `internal_error`    | `unexpected_error`              | Unhandled exception fallback (FR-ER-04); message is generic.          |
+| `config_error`      | `presets_invalid`               | Startup-fail: `presets.json` schema violation or unknown `TTS_DEFAULT_PRESET` (FR-PR-02 / FR-PR-05). |
+| `config_error`      | `preset_provider_invalid`       | Startup-fail: a preset pins a `(provider, model)` outside any provider's allow-list (FR-PR-13).     |
+| `config_error`      | `presets_unsafe_permissions`    | Startup-fail: `presets.json` is world-writable or owned by a different uid (NFR-SE-09).             |
 
 ## Voice biometric notice (NFR-CP-01 / NFR-PV-04)
 
