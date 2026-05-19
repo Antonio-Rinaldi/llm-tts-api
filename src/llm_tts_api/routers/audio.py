@@ -21,6 +21,7 @@ from starlette.responses import StreamingResponse
 from llm_tts_api.config import Settings
 from llm_tts_api.dependencies import (
     get_device_profile,
+    get_preset_registry_snapshot,
     get_provider_selection,
     get_settings,
     get_stt_service,
@@ -33,6 +34,7 @@ from llm_tts_api.errors import invalid_request, raise_not_implemented
 from llm_tts_api.observability import current_request_id
 from llm_tts_api.schemas.speech import SpeechRequest
 from llm_tts_api.schemas.synthesis import SynthesizeRequest
+from llm_tts_api.services.presets import PresetRegistry
 from llm_tts_api.services.stt_service import STTService
 from llm_tts_api.services.synthesize_service import synthesize_core
 from llm_tts_api.services.tts_providers.auto_select import ProviderSelection
@@ -141,6 +143,7 @@ async def create_speech(
     device_profile: Annotated[DeviceProfile, Depends(get_device_profile)],
     metadata_repo: Annotated[VoiceMetadataRepository, Depends(get_voice_metadata_repo)],
     blob_repo: Annotated[VoiceBlobRepository, Depends(get_voice_blob_repo)],
+    preset_snapshot: Annotated[PresetRegistry, Depends(get_preset_registry_snapshot)],
     stream: bool = Query(False, description="If true, stream audio from memory instead of file"),
 ) -> Response:
     """OpenAI-compatible speech endpoint — thin translator over the rich pipeline."""
@@ -154,6 +157,7 @@ async def create_speech(
         device_profile=device_profile,
         metadata_repo=metadata_repo,
         blob_repo=blob_repo,
+        preset_snapshot=preset_snapshot,
     )
     return _openai_response(inner)
 

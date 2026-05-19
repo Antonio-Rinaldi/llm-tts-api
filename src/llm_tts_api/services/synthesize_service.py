@@ -538,6 +538,7 @@ async def synthesize_core(
     device_profile: DeviceProfile,
     metadata_repo: VoiceMetadataRepository,
     blob_repo: VoiceBlobRepository,
+    preset_snapshot: PresetRegistry,
 ) -> Response:
     """Shared synthesis entry point (S-017).
 
@@ -552,14 +553,12 @@ async def synthesize_core(
         raise invalid_request("voice is required", param="voice", code="voice_required")
     voice_id = payload.voice.strip()
 
-    # S-028 — resolve preset once at the top so the EffectiveSynthesisConfig
-    # is the single source of truth for the rest of the pipeline. Snapshot
-    # is captured from app.state at request-start per FR-PR-11 / NFR-PR-04
-    # (S-029 generalizes the snapshot capture; until then this read is
-    # request-scoped because lifespan-only mutation is the current
-    # invariant). The resolver is pure — it never reads ``request.app``.
-    preset_registry: PresetRegistry = request.app.state.preset_registry
-    effective = resolve_preset(payload, preset_registry, settings)
+    # S-028 / S-029 — the PresetRegistry snapshot is captured at request
+    # entry by ``Depends(get_preset_registry_snapshot)`` and passed in
+    # explicitly. The resolver is pure and never re-reads
+    # ``app.state.preset_registry``, so a mid-flight hot-reload swap
+    # (NFR-PR-04) cannot tear this resolution.
+    effective = resolve_preset(payload, preset_snapshot, settings)
     preset_headers: dict[str, str] = {
         "X-Preset-Effective": _format_preset_effective_header(effective),
     }
