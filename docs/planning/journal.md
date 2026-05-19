@@ -13,7 +13,7 @@
 | Metric | Value |
 |---|---|
 | Cycle-1 stories | 25 (S-001..S-026, all DONE) |
-| Cycle-2 stories | 10 (S-027..S-036, all Not started) |
+| Cycle-2 stories | 10 (S-027..S-036; 3 PLANNED in Sprint 7, 7 Not started) |
 | **Total** | **35** |
 | User stories (cycle 1) | 9 |
 | Technical stories (cycle 1 + cycle 2) | 26 |
@@ -565,7 +565,7 @@ Group J (terminal — depends on all cycle-2 production code)
 
 #### S-027: Presets configuration foundation
 **Type:** Technical
-**Status:** Not started
+**Status:** PLANNED (Sprint 7)
 **Depends on:** None (cycle-1 S-003 lifespan + S-012 Settings are DONE)
 **Parallel group:** F
 **Refs:** FR-PR-01, FR-PR-02, FR-PR-05, FR-PR-13, NFR-SE-09, NFR-PR-02
@@ -586,7 +586,7 @@ Group J (terminal — depends on all cycle-2 production code)
 
 #### S-028: Preset resolution + EffectiveSynthesisConfig
 **Type:** Technical
-**Status:** Not started
+**Status:** PLANNED (Sprint 7)
 **Depends on:** S-027
 **Parallel group:** G
 **Refs:** FR-PR-04, FR-PR-06, FR-PR-07, FR-PR-08, FR-PR-09, FR-PR-10, BR-10, BR-12, BR-17
@@ -603,7 +603,7 @@ Group J (terminal — depends on all cycle-2 production code)
 
 #### S-029: Preset hot-reload + in-flight snapshot
 **Type:** Technical
-**Status:** Not started
+**Status:** PLANNED (Sprint 7)
 **Depends on:** S-027 (NOT S-028 — registry primitive is orthogonal to resolution code)
 **Parallel group:** G
 **Refs:** FR-PR-11, NFR-SE-10, NFR-PR-03, NFR-PR-04, BR-11, RISK-3, RISK-PR-3

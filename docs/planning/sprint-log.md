@@ -10,6 +10,21 @@ Tracks sprints planned and their disposition.
 | 4 | Rich endpoint surface — synthesize + streaming + cancellation | S-013, S-015, S-016 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-18 |
 | 5 | OpenAI adapter + byte-identity equivalence | S-017, S-018 | DONE | 2026-05-18 | 2026-05-18 | 2026-05-19 |
 | 6 | Cycle close-out — docs, container, perf validation, dedup | S-019, S-020, S-021, S-026 | DONE | 2026-05-19 | 2026-05-19 | 2026-05-19 |
+| 7 | **Cycle 2** — Presets foundation + resolution + hot-reload | S-027, S-028, S-029 | PLANNED | 2026-05-19 | — | — |
+
+## Sprint 7 — summary
+
+**Cycle:** 2 (dual-mode audio presets) — first sprint.
+
+**Objective:** land the preset registry foundation (S-027) and the two primitives every cycle-2 story depends on: request-time resolution producing `EffectiveSynthesisConfig` (S-028) and the hot-reload + in-flight snapshot semantic (S-029). Proves the cycle-2 spine end-to-end without yet adding postproc, format extension, or quality-stream downgrade.
+
+**Composition:** 3 stories, 2 execution steps. Step 1: S-027 alone (cycle-2 foundation — config, schema, startup validation incl. NFR-SE-09 file permissions). Step 2: S-028 + S-029 in parallel (both consume `app.state.preset_registry`; no cross-deps — S-028 owns resolution, S-029 owns watcher/swap/snapshot).
+
+**Provability:** UAT-PR-01..09 + UAT-PR-11..15 (13 of the 17 cycle-2 preset UAT cases — the remaining 4 land later); 5 new error codes; **NFR-PT-05 (S-018 byte-identity invariant) verified** by `test_openai_adapter_parity.py` passing byte-identically post-S-028.
+
+**Risks:** S-018 byte-identity break under resolution drift (RISK-PR-5) — mitigated by centralizing resolution in one function and running the paired UAT at end-of-S-028; S-027↔S-029 lifespan coupling — mitigated by cycle-1 drain pattern; signature alignment between S-028 T3 and S-029 T3 — locked in S-027 impl notes.
+
+**Detail:** `docs/planning/sprints/sprint-7.md`.
 
 ## Sprint 6 — summary
 
