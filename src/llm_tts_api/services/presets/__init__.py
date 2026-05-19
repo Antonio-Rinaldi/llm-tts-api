@@ -36,6 +36,7 @@ from llm_tts_api.services.presets.config import (
     load_preset_registry,
     validate_preset_providers,
 )
+from llm_tts_api.services.presets.reloader import PresetRegistryReloader
 from llm_tts_api.services.presets.startup import (
     initialize_preset_registry,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "PresetEntry",
     "PresetPostprocess",
     "PresetRegistry",
+    "PresetRegistryReloader",
     "PresetsInvalidError",
     "PresetsUnsafePermissionsError",
     "PresetProviderInvalidError",

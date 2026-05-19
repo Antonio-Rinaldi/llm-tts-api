@@ -45,9 +45,14 @@ from llm_tts_api.routers.synthesize import router as synthesize_router
 from llm_tts_api.routers.voices import router as voices_router
 from llm_tts_api.services.presets import (
     PresetProviderInvalidError,
+    PresetRegistry,
+    PresetRegistryReloader,
     PresetsInvalidError,
     PresetsUnsafePermissionsError,
     initialize_preset_registry,
+)
+from llm_tts_api.services.presets.reloader import (
+    force_polling_from_env as preset_force_polling_from_env,
 )
 
 logger = logging.getLogger(__name__)
@@ -197,6 +202,7 @@ def create_app() -> FastAPI:
         """
         drain_seconds = 0
         seed_watcher_task: asyncio.Task[None] | None = None
+        preset_reloader_task: asyncio.Task[None] | None = None
         try:
             if not _test_bypass_active():
                 deps = build_default_dependencies()
@@ -210,6 +216,26 @@ def create_app() -> FastAPI:
                 # config_error.* codes (FR-PR-02/05/13, NFR-SE-09 / UAT-PR-11..14).
                 app.state.preset_registry = _load_presets_or_exit(
                     deps.settings, deps.provider_registry
+                )
+
+                # S-029 — hot-reload watcher. Watches TTS_PRESETS_FILE and
+                # atomically swaps app.state.preset_registry on every valid
+                # edit; invalid edits keep the prior registry live (NFR-SE-10).
+                # Permission posture is startup-only (RISK-PR-3); the reloader
+                # deliberately does NOT re-run it.
+                def _swap_preset_registry(new_registry: PresetRegistry) -> None:
+                    app.state.preset_registry = new_registry
+
+                preset_reloader = PresetRegistryReloader(
+                    settings=deps.settings,
+                    provider_registry=deps.provider_registry,
+                    on_swap=_swap_preset_registry,
+                    force_polling=preset_force_polling_from_env(),
+                )
+                app.state.preset_reloader = preset_reloader
+                preset_reloader_task = asyncio.create_task(
+                    preset_reloader.watch(),
+                    name="preset-registry-reloader",
                 )
                 app.state.model_cache = deps.model_cache
                 app.state.tts_service = deps.tts_service
@@ -242,12 +268,16 @@ def create_app() -> FastAPI:
         finally:
             app.state.ready = False
             app.state.ready_reason = "draining"
+            import contextlib
+
             if seed_watcher_task is not None:
                 seed_watcher_task.cancel()
-                import contextlib
-
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await seed_watcher_task
+            if preset_reloader_task is not None:
+                preset_reloader_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await preset_reloader_task
             if drain_seconds > 0:
                 await _drain_concurrency(app, drain_seconds)
 
