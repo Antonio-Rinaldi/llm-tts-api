@@ -410,7 +410,7 @@ Group E (cross-cutting polish, late)
 
 #### S-019: Documentation refresh
 **Type:** Technical
-**Status:** PLANNED (Sprint 6)
+**Status:** DONE (Sprint 6)
 **Depends on:** S-006..S-017 (substance complete enough to document)
 **Parallel group:** E
 **Refs:** FR-DC-01..03, NFR-MT-06, NFR-CP-01, NFR-PV-04
@@ -425,7 +425,7 @@ Group E (cross-cutting polish, late)
 
 #### S-020: Dockerfile + CI docker build update
 **Type:** Technical
-**Status:** PLANNED (Sprint 6)
+**Status:** DONE (Sprint 6)
 **Depends on:** S-012, S-010, S-011
 **Parallel group:** E
 **Refs:** NFR-OP-02, FR-QG-04
@@ -440,7 +440,7 @@ Group E (cross-cutting polish, late)
 
 #### S-021: Performance validation against baseline
 **Type:** Technical
-**Status:** PLANNED (Sprint 6)
+**Status:** DONE (Sprint 6)
 **Depends on:** S-002, S-007, S-013, S-017 (feature surface stable)
 **Parallel group:** E
 **Refs:** NFR-PF-01..04, RISK-2
@@ -455,7 +455,7 @@ Group E (cross-cutting polish, late)
 
 #### S-026: Code-duplication refactor (cycle-end cleanup)
 **Type:** Technical
-**Status:** PLANNED (Sprint 6)
+**Status:** DONE (Sprint 6)
 **Depends on:** S-019, S-020, S-021 (all production code, docs, and validation complete first)
 **Parallel group:** E (sequential terminal — runs AFTER the rest of Sprint 6)
 **Refs:** NFR-MT-01..04, BR-9, NFR-PT-03
