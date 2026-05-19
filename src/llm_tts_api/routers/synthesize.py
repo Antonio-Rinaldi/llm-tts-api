@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from llm_tts_api.config import Settings
 from llm_tts_api.dependencies import (
     get_device_profile,
+    get_preset_registry_snapshot,
     get_provider_selection,
     get_settings,
     get_tts_provider_registry,
@@ -29,6 +30,7 @@ from llm_tts_api.dependencies import (
 )
 from llm_tts_api.engine import DeviceProfile
 from llm_tts_api.schemas.synthesis import SynthesizeRequest
+from llm_tts_api.services.presets import PresetRegistry
 from llm_tts_api.services.synthesize_service import (
     _client_advertises_trailers,
     _run_synthesis,
@@ -63,6 +65,7 @@ async def synthesize(
     device_profile: Annotated[DeviceProfile, Depends(get_device_profile)],
     metadata_repo: Annotated[VoiceMetadataRepository, Depends(get_voice_metadata_repo)],
     blob_repo: Annotated[VoiceBlobRepository, Depends(get_voice_blob_repo)],
+    preset_snapshot: Annotated[PresetRegistry, Depends(get_preset_registry_snapshot)],
 ) -> Response:
     """Rich-endpoint synthesis handler — delegates to the shared pipeline."""
     return await synthesize_core(
@@ -74,4 +77,5 @@ async def synthesize(
         device_profile=device_profile,
         metadata_repo=metadata_repo,
         blob_repo=blob_repo,
+        preset_snapshot=preset_snapshot,
     )
