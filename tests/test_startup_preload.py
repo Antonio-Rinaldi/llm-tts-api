@@ -32,6 +32,7 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
     from llm_tts_api.services.tts_providers.auto_select import ProviderSelection
     from llm_tts_api.services.tts_providers.registry import TTSProviderRegistry
     from llm_tts_api.services.voice_store import VoiceSeedIngestor
+    from tests.fakes.fake_tts_provider import FakeTTSProvider
     from tests.fakes.fake_voice_store import (
         FakeVoiceBlobRepository,
         FakeVoiceMetadataRepository,
@@ -71,7 +72,9 @@ def _stub_deps(fake: FakeTTSService) -> AppDependencies:
             provider_name="mlx_audio", device="cpu", source="auto"
         ),
         model_registry=object.__new__(ModelRegistry),
-        provider_registry=TTSProviderRegistry(providers=[]),
+        provider_registry=TTSProviderRegistry(
+            providers=[FakeTTSProvider(provider_name="mlx_audio")]  # type: ignore[list-item]
+        ),
         model_cache=LRUModelCache(max_size=1),
         tts_service=fake,  # type: ignore[arg-type]
         stt_service=STTService(),

@@ -50,6 +50,9 @@ class PresetDefaults(BaseModel):
     normalize_db: float | None = None
     response_format: Literal["wav", "wav24", "flac"] | None = None
     postprocess: PresetPostprocess | None = None
+    language: str | None = None
+    number_lang: str | None = None
+    voice: str | None = None
 
 
 class PresetEntry(BaseModel):

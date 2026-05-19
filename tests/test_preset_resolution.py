@@ -352,6 +352,98 @@ def test_uat_pr_07_openai_request_rejects_preset_field(client: TestClient) -> No
 
 
 # ---------------------------------------------------------------------------
+# UAT-PR-18 — HF-2: language / number_lang / voice flow through preset defaults
+# (FR-PR-03 amended). Explicit request fields still override per BR-10.
+# ---------------------------------------------------------------------------
+
+
+def test_uat_pr_18_preset_defaults_language_number_lang_voice_apply() -> None:
+    """Happy path — preset-pinned ``language`` / ``number_lang`` / ``voice``
+    flow through ``EffectiveSynthesisConfig`` when the request omits them."""
+    snapshot = _registry(
+        custom=_entry(
+            temperature=0.7,
+            top_p=0.9,
+            response_format="wav",
+            language="en",
+            number_lang="en",
+            voice="alloy",
+        ),
+    )
+    request = SynthesizeRequest(input="hello", preset="custom")
+
+    cfg = resolve_preset(request, snapshot, _stub_settings("custom"))
+
+    assert cfg.language == "en"
+    assert cfg.number_lang == "en"
+    assert cfg.voice == "alloy"
+    assert dict(cfg.effective_overrides) == {}
+
+
+def test_uat_pr_18_explicit_request_fields_override_preset_pins(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Override regression — explicit request fields beat preset pins per BR-10."""
+    snapshot = _registry(
+        custom=_entry(
+            language="en",
+            number_lang="en",
+            voice="alloy",
+            response_format="wav",
+        ),
+    )
+    request = SynthesizeRequest(
+        input="hello",
+        preset="custom",
+        language="it",
+        number_lang="it",
+        voice="echo",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="llm_tts_api.services.synthesize_service"):
+        cfg = resolve_preset(request, snapshot, _stub_settings("custom"))
+
+    assert cfg.language == "it"
+    assert cfg.number_lang == "it"
+    assert cfg.voice == "echo"
+    overrides = dict(cfg.effective_overrides)
+    assert overrides["language"] == "it"
+    assert overrides["number_lang"] == "it"
+    assert overrides["voice"] == "echo"
+    messages = " ".join(rec.message for rec in caplog.records)
+    assert "language" in messages
+    assert "number_lang" in messages
+    assert "voice" in messages
+
+
+# ---------------------------------------------------------------------------
+# HF-2 shipped-preset regressions — guard config/presets.json against drift.
+# ---------------------------------------------------------------------------
+
+
+def test_hf2_quality_preset_pins_provider_and_model() -> None:
+    """Quality preset MUST demonstrate provider+model out of the box (HF-2)."""
+    from llm_tts_api.services.presets.config import load_preset_registry
+
+    registry = load_preset_registry(Path("config/presets.json"))
+    quality = registry.get("quality")
+    assert quality is not None
+    assert quality.defaults.provider == "mlx_audio"
+    assert quality.defaults.model == "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+
+
+def test_hf2_balanced_preset_leaves_provider_and_model_unset() -> None:
+    """Balanced preset MUST stay default for A-PR-1 byte-compat (HF-2 / NFR-PT-05)."""
+    from llm_tts_api.services.presets.config import load_preset_registry
+
+    registry = load_preset_registry(Path("config/presets.json"))
+    balanced = registry.get("balanced")
+    assert balanced is not None
+    assert balanced.defaults.provider is None
+    assert balanced.defaults.model is None
+
+
+# ---------------------------------------------------------------------------
 # Fixture helpers shared with the parity case
 # ---------------------------------------------------------------------------
 

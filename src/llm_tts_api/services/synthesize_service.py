@@ -98,6 +98,9 @@ class EffectiveSynthesisConfig:
     normalize_db: float | None
     response_format: str
     postprocess: PresetPostprocess | None
+    language: str | None = None
+    number_lang: str | None = None
+    voice: str | None = None
     ignored_knobs: tuple[str, ...] = ()
     effective_overrides: Mapping[str, str] = field(default_factory=dict)
 
@@ -128,6 +131,12 @@ def _format_preset_effective_header(cfg: EffectiveSynthesisConfig) -> str:
         parts.append(("max_sentences_per_chunk", cfg.max_sentences_per_chunk))
     if cfg.normalize_db is not None:
         parts.append(("normalize_db", cfg.normalize_db))
+    if cfg.language is not None:
+        parts.append(("language", cfg.language))
+    if cfg.number_lang is not None:
+        parts.append(("number_lang", cfg.number_lang))
+    if cfg.voice is not None:
+        parts.append(("voice", cfg.voice))
     parts.append(("response_format", cfg.response_format))
     body = ",".join(f"{k}={_format_value(v)}" for k, v in sorted(parts, key=lambda kv: kv[0]))
     return f"{cfg.preset_name}({body})"
@@ -197,6 +206,9 @@ def resolve_preset(
         defaults.max_sentences_per_chunk,
     )
     normalize_db = _pick("normalize_db", request.normalize_db, defaults.normalize_db)
+    language = _pick("language", request.language, defaults.language)
+    number_lang = _pick("number_lang", request.number_lang, defaults.number_lang)
+    voice = _pick("voice", request.voice, defaults.voice)
 
     # ``response_format`` on the rich request is currently ``Literal["wav"]``
     # with default ``"wav"`` — we cannot distinguish operator-explicit
@@ -221,6 +233,9 @@ def resolve_preset(
         normalize_db=normalize_db,
         response_format=resolved_format,
         postprocess=defaults.postprocess,
+        language=language,
+        number_lang=number_lang,
+        voice=voice,
         ignored_knobs=tuple(ignored),
         effective_overrides=overrides,
     )
@@ -295,12 +310,13 @@ def _resolve_provider_and_model(
     settings: Settings,
     provider_registry: TTSProviderRegistry,
     provider_selection: ProviderSelection,
+    effective: EffectiveSynthesisConfig,
 ) -> tuple[str, str, TTSProviderStrategy]:
-    """Pick provider + model from request overrides or auto-selection."""
-    provider_name = (payload.provider or "").strip() or provider_selection.provider_name
+    """Pick provider + model from effective preset+request or auto-selection."""
+    provider_name = (effective.provider or "").strip() or provider_selection.provider_name
     provider_strategy = provider_registry.get(provider_name)
 
-    model_name = (payload.model or "").strip() or settings.tts_model_default_for_provider(
+    model_name = (effective.model or "").strip() or settings.tts_model_default_for_provider(
         provider_name
     )
     allowed_models = settings.tts_model_allowed_for_provider(provider_name)
@@ -317,16 +333,17 @@ def _build_voice_config(
     record: VoiceRecord,
     payload: SynthesizeRequest,
     tmp_path: str,
+    effective: EffectiveSynthesisConfig,
 ) -> VoiceConfig:
-    """Merge per-request overrides on top of the stored voice record."""
-    language = (payload.language or record.language).strip() or record.language
-    number_lang = payload.number_lang if payload.number_lang is not None else record.number_lang
-    temperature = payload.temperature if payload.temperature is not None else record.temperature
-    top_p = payload.top_p if payload.top_p is not None else record.top_p
-    target_db = payload.normalize_db if payload.normalize_db is not None else record.target_db
+    """Merge effective preset+request overrides on top of the stored voice record."""
+    language = (effective.language or record.language).strip() or record.language
+    number_lang = effective.number_lang if effective.number_lang is not None else record.number_lang
+    temperature = effective.temperature if effective.temperature is not None else record.temperature
+    top_p = effective.top_p if effective.top_p is not None else record.top_p
+    target_db = effective.normalize_db if effective.normalize_db is not None else record.target_db
     max_sentences = (
-        payload.max_sentences_per_chunk
-        if payload.max_sentences_per_chunk is not None
+        effective.max_sentences_per_chunk
+        if effective.max_sentences_per_chunk is not None
         else record.max_sentences_per_chunk
     )
     return VoiceConfig(
@@ -549,16 +566,20 @@ async def synthesize_core(
     (FR-EP-04 inventory) are always populated; the OpenAI adapter strips
     them at the boundary to keep its response shape OpenAI-identical.
     """
-    if not payload.voice or not payload.voice.strip():
-        raise invalid_request("voice is required", param="voice", code="voice_required")
-    voice_id = payload.voice.strip()
-
     # S-028 / S-029 — the PresetRegistry snapshot is captured at request
     # entry by ``Depends(get_preset_registry_snapshot)`` and passed in
     # explicitly. The resolver is pure and never re-reads
     # ``app.state.preset_registry``, so a mid-flight hot-reload swap
     # (NFR-PR-04) cannot tear this resolution.
     effective = resolve_preset(payload, preset_snapshot, settings)
+
+    # HF-2 / FR-PR-03 — voice may be supplied by the preset, so resolve
+    # the preset first and fall back to ``effective.voice`` before
+    # raising ``voice_required``.
+    resolved_voice = (payload.voice or effective.voice or "").strip()
+    if not resolved_voice:
+        raise invalid_request("voice is required", param="voice", code="voice_required")
+    voice_id = resolved_voice
     preset_headers: dict[str, str] = {
         "X-Preset-Effective": _format_preset_effective_header(effective),
     }
@@ -581,7 +602,7 @@ async def synthesize_core(
     record, blob_bytes = await _resolve_voice(voice_id, metadata_repo, blob_repo)
 
     provider_name, model_name, provider_strategy = _resolve_provider_and_model(
-        payload, settings, provider_registry, provider_selection
+        payload, settings, provider_registry, provider_selection, effective
     )
 
     tmp_path: str | None = None
@@ -592,7 +613,7 @@ async def synthesize_core(
             tmpf.write(blob_bytes)
             tmp_path = tmpf.name
 
-        voice_config = _build_voice_config(record, payload, tmp_path)
+        voice_config = _build_voice_config(record, payload, tmp_path, effective)
 
         normalized_input = preprocess_for_tts(
             input_text, voice_config.number_lang or voice_config.language

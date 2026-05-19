@@ -33,13 +33,16 @@
   },
   "quality": {
     "label": "Quality (buffered audiobook chapter)",
-    "description": "Higher-fidelity preset with full post-processing pipeline and FLAC output (buffered only).",
+    "description": "Higher-fidelity preset with full post-processing pipeline and FLAC output (buffered only). Pins MLX-Audio + Qwen3 to demonstrate provider/model selection.",
     "defaults": {
+      "provider": "mlx_audio",
+      "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
       "temperature": 0.8,
       "top_p": 0.95,
       "max_sentences_per_chunk": 3,
       "normalize_db": -20.0,
       "response_format": "flac",
+      "language": "en",
       "postprocess": {
         "rms_normalize": true,
         "silence_trim": true,
