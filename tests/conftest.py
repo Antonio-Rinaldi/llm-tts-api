@@ -135,6 +135,14 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     settings.tts_voice_blob_s3_bucket = ""
     settings.tts_voice_blob_s3_region = ""
     settings.tts_refaudio_max_bytes = 10 * 1024 * 1024
+    # S-027 / S-028 — presets foundation slots. Default preset name +
+    # presets file path live on Settings; the resolved registry lives on
+    # app.state (set below).
+    from pathlib import Path as _Path
+
+    settings.tts_default_preset = "balanced"
+    settings.tts_presets_file = _Path("config/presets.json")
+    settings.tts_silence_trim_threshold_db = -50.0
 
     app_state.settings = settings  # type: ignore[attr-defined]
     app_state.device_profile = DeviceProfile(  # type: ignore[attr-defined]
@@ -188,6 +196,60 @@ def _stub_app_state(app_state: object, fake_tts: FakeTTSService) -> None:
     # this directly in test bodies that need the not-ready path.
     app_state.ready = True  # type: ignore[attr-defined]
     app_state.ready_reason = "ready"  # type: ignore[attr-defined]
+    # S-027 / S-028 — preset registry slot. Tests bypass the real lifespan
+    # so we hand-build a registry mirroring the three shipped presets just
+    # well enough that ``resolve_preset`` can produce an
+    # ``EffectiveSynthesisConfig`` on every request through
+    # ``synthesize_core``. Tests that need a tampered registry override
+    # this slot directly.
+    from llm_tts_api.services.presets.config import (
+        PresetDefaults,
+        PresetEntry,
+        PresetPostprocess,
+        PresetRegistry,
+    )
+
+    _stub_postproc = PresetPostprocess()
+    app_state.preset_registry = PresetRegistry(  # type: ignore[attr-defined]
+        _presets={
+            "fast": PresetEntry(
+                label="Fast",
+                description="stub",
+                defaults=PresetDefaults(
+                    temperature=0.7,
+                    top_p=0.9,
+                    max_sentences_per_chunk=1,
+                    normalize_db=-20.0,
+                    response_format="wav",
+                    postprocess=_stub_postproc,
+                ),
+            ),
+            "balanced": PresetEntry(
+                label="Balanced",
+                description="stub",
+                defaults=PresetDefaults(
+                    temperature=0.8,
+                    top_p=0.95,
+                    max_sentences_per_chunk=2,
+                    normalize_db=-20.0,
+                    response_format="wav",
+                    postprocess=_stub_postproc,
+                ),
+            ),
+            "quality": PresetEntry(
+                label="Quality",
+                description="stub",
+                defaults=PresetDefaults(
+                    temperature=0.8,
+                    top_p=0.95,
+                    max_sentences_per_chunk=3,
+                    normalize_db=-20.0,
+                    response_format="flac",
+                    postprocess=PresetPostprocess(rms_normalize=True, silence_trim=True),
+                ),
+            ),
+        }
+    )
 
 
 @pytest.fixture
