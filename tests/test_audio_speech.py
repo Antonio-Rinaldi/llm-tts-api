@@ -28,6 +28,10 @@ def _build_client_with_voice(
         encoding="utf-8",
     )
     monkeypatch.setenv("TTS_VOICE_MAP_FILE", str(voice_map))
+    # Isolate the FS voice store from the persistent ``var/voices/``
+    # directory so manual operator testing (or seed-ingestion runs
+    # against a real catalogue) cannot leak voice ids into pytest.
+    monkeypatch.setenv("TTS_VOICE_STORE_DIR", str(tmp_path / "voices"))
     # Force the device profile to MPS so S-006 auto-selection picks
     # ``mlx_audio`` (the provider whose preload these tests mock out).
     # Without this override CI runners on Linux/CPU would fail startup
