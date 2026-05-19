@@ -517,6 +517,16 @@ Test environment assumptions: Apple Silicon dev box for primary path; CUDA host 
 **Expected:** All paired tests pass. sha256 of rich(`preset=balanced`, no overrides) body byte-equals sha256 of OpenAI-path body for the same effective request. The test file itself is byte-identical to its merged cycle-1 form (`git diff master tests/test_openai_adapter_parity.py` empty).
 **Trace:** NFR-PT-05.
 
+### UAT-PR-18 (Happy + override) — Preset pinning `voice` + `language` is honored; explicit fields still win
+**Preconditions:** A custom preset in `config/presets.json` with `defaults.voice="alloy"`, `defaults.language="en"`, `defaults.number_lang="en"` (added per triage T-3 / FR-PR-03 amendment).
+**Steps:**
+(a) `POST /v1/tts/synthesize` with `{"input":"Hello world.","preset":"<custom>"}` (no `voice`, no `language`, no `number_lang`).
+(b) `POST /v1/tts/synthesize` with `{"input":"Hello world.","preset":"<custom>","language":"it"}` (explicit `language` override; preset's `voice` + `number_lang` still applied).
+**Expected:**
+(a) 200 OK; `X-Preset-Effective` shows `voice=alloy, language=en, number_lang=en`; synthesis uses voice `alloy` and English pronunciation.
+(b) 200 OK; `X-Preset-Effective` shows `voice=alloy, language=it (override), number_lang=en`; synthesis uses voice `alloy`, Italian pronunciation, English number expansion. WARN log records the `language` override per BR-10.
+**Trace:** FR-PR-03 (amended), FR-PR-06, FR-PR-08, BR-10.
+
 ---
 
 ## UAT-PP — Audio Post-Processing (*cycle 2*)
@@ -624,6 +634,7 @@ Test environment assumptions: Apple Silicon dev box for primary path; CUDA host 
 | FR-QG-01..04 | UAT-QG-01 … UAT-QG-05 |
 | FR-DC-01..03 | UAT-DC-01 … UAT-DC-03 |
 | FR-PR-01..13 (*cycle 2*) | UAT-PR-01 … UAT-PR-13 |
+| FR-PR-03 amendment (T-3, 2026-05-19) | UAT-PR-18 |
 | NFR-SE-09 (*cycle 2*) | UAT-PR-14 |
 | NFR-SE-10 (*cycle 2*) | UAT-PR-15 |
 | NFR-OP-06 (*cycle 2*) | UAT-PR-16 |
