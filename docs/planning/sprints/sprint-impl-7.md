@@ -966,3 +966,274 @@ Sprint 7 is **READY-FOR-MERGE** at the sprint level. The cycle-2 spine is end-to
 
 The three downstream cycle-2 parallel-Group-H stories (S-030..S-036) can now consume `EffectiveSynthesisConfig`, the request-scoped snapshot, and the validate-before-swap reload semantic on a stable foundation.
 
+
+---
+
+## Hotfixes
+
+*Path B (Modifications Requested) executed after user review of Sprint 7 surfaced 4 issues. Triage at docs/specs/triage/sprint-7-mid-review-triage.md. Merge order: HF-2 → HF-3 → HF-1 (docs reflect code).*
+
+### HF-2
+
+# HF-2 — Preset schema expansion + populate shipped presets
+
+**Branch:** `sprint-7-HF-2-fix`
+**Commit:** `576e1ae`
+**Baseline:** 426 passed → **430 passed**, 2 skipped, 3 deselected, 1 xfailed.
+
+## Problem
+
+| | |
+|---|---|
+| Reported by | PO (sprint-7 mid-review, T-3) — "In un preset bisognerebbe essere in grado di scegliere e configurare tutto" |
+| Symptom | The three shipped presets in `config/presets.json` left `provider` and `model` unset, so users could not see from a default install that a preset can pin provider + model. Combined with FRS amendment FR-PR-03, `language`, `number_lang` and `voice` were missing from `PresetDefaults` entirely. |
+| Impact | Capability invisible. Users concluded "preset cannot configure everything"; cycle-2 preset feature undersold. |
+
+## Root cause
+
+| | |
+|---|---|
+| Schema | `PresetDefaults` (S-027 / `src/llm_tts_api/services/presets/config.py`) exposed `provider` + `model` slots but had no `language` / `number_lang` / `voice` slots — request-only fields that BR-10 says should be preset-defaulable. |
+| Service shape | `EffectiveSynthesisConfig` (S-028 / `synthesize_service.py`) mirrored `PresetDefaults` and was likewise missing the three fields. |
+| Downstream | `_build_voice_config` and `_resolve_provider_and_model` in `synthesize_core` read directly from `SynthesizeRequest`, bypassing the EffectiveSynthesisConfig that the resolver had carefully merged — so even if the resolver had grown the fields, the consumers would not have honored them. |
+| Config | Out-of-the-box `quality` preset did not demonstrate provider + model selection. |
+
+## Fix
+
+### Schema + resolver
+
+| | |
+|---|---|
+| File | `src/llm_tts_api/services/presets/config.py` |
+| Change | `PresetDefaults` gains `language: str \| None`, `number_lang: str \| None`, `voice: str \| None` (all default `None`). `extra="forbid"` preserved. |
+
+| | |
+|---|---|
+| File | `src/llm_tts_api/services/synthesize_service.py` |
+| Change | `EffectiveSynthesisConfig` mirrors the 3 new fields (default `None`). `resolve_preset` merges them via the existing `_pick` helper — BR-10 precedence (explicit request > preset > Settings/VoiceRecord). `_format_preset_effective_header` surfaces them in the `X-Preset-Effective` header alphabetically when set. |
+
+### Downstream wiring (synthesize_core)
+
+| | |
+|---|---|
+| Voice resolution | `voice_required` check moved AFTER `resolve_preset`; `voice_id` is now `(payload.voice or effective.voice or "").strip()` so a preset-pinned voice can satisfy the requirement. |
+| Voice config build | `_build_voice_config` now takes `EffectiveSynthesisConfig` and reads `effective.language`, `effective.number_lang`, `effective.temperature`, `effective.top_p`, `effective.normalize_db`, `effective.max_sentences_per_chunk` (with `VoiceRecord` defaults as final fallback). |
+| Provider+model | `_resolve_provider_and_model` now reads `effective.provider` / `effective.model` (instead of `payload.provider` / `payload.model`) so preset-pinned values flow into auto-selection / allow-list checks. |
+| Byte-compat | `balanced` preset has none of these fields set → `effective.*` falls back to `payload.*` → identical behavior to cycle-1 default path. NFR-PT-05 paired UAT (`test_openai_adapter_parity.py`) untouched (`git diff master -- tests/test_openai_adapter_parity.py` = 0 lines) and passes. |
+
+### Shipped config
+
+| | |
+|---|---|
+| File | `config/presets.json` |
+| `quality` | Now pins `provider: "mlx_audio"`, `model: "Qwen/Qwen3-TTS-12Hz-0.6B-Base"`, `language: "en"`. Description updated to flag the demonstrative pinning. |
+| `balanced` | Unchanged — leaves `provider` + `model` unset for A-PR-1 byte-compat. |
+| `fast` | Unchanged — no smaller Qwen variant currently in the allow-list to pin against. |
+
+## Tests
+
+| | |
+|---|---|
+| File | `tests/test_preset_resolution.py` |
+| Added | `test_uat_pr_18_preset_defaults_language_number_lang_voice_apply` — preset-pinned `language` / `number_lang` / `voice` propagate when request omits them. |
+| Added | `test_uat_pr_18_explicit_request_fields_override_preset_pins` — explicit request fields win + WARN logged + `effective_overrides` populated per BR-10. |
+| Added | `test_hf2_quality_preset_pins_provider_and_model` — loads shipped `config/presets.json`, asserts `quality.defaults.provider == "mlx_audio"` and the Qwen model id. Fails if a future contributor unsets them. |
+| Added | `test_hf2_balanced_preset_leaves_provider_and_model_unset` — guards A-PR-1 byte-compat invariant from the config side. |
+
+| | |
+|---|---|
+| File | `tests/test_startup_preload.py` |
+| Change | `_stub_deps` was passing `TTSProviderRegistry(providers=[])` which (after quality pinned `mlx_audio`) caused `validate_preset_providers` to fail startup — it now registers a `FakeTTSProvider(provider_name="mlx_audio")` so the shipped registry validates. Test intent unchanged. |
+
+## Files created
+
+_(none)_
+
+## Files changed
+
+- `src/llm_tts_api/services/presets/config.py` — `PresetDefaults` +3 fields.
+- `src/llm_tts_api/services/synthesize_service.py` — `EffectiveSynthesisConfig` +3 fields, resolver merge, header surfacing, `_build_voice_config` / `_resolve_provider_and_model` rewired to read effective config, voice-required check reordered after `resolve_preset`.
+- `config/presets.json` — `quality` pins provider + model + language.
+- `tests/test_preset_resolution.py` — UAT-PR-18 + shipped-preset regressions.
+- `tests/test_startup_preload.py` — stub registers fake `mlx_audio` provider so the new shipped pin validates.
+
+## Gates
+
+| Gate | Result |
+|---|---|
+| `uv run ruff check .` | All checks passed |
+| `uv run ruff format --check .` | 103 files already formatted |
+| `uv run mypy --strict src/` | Success: no issues found in 57 source files |
+| `uv run pytest` | 430 passed, 2 skipped, 3 deselected, 1 xfailed (baseline +4) |
+| `uv run pip-audit` | No known vulnerabilities |
+
+## NFR-PT-05 (S-018 paired UAT byte-identity)
+
+| Check | Result |
+|---|---|
+| `uv run pytest tests/test_openai_adapter_parity.py -v` | Passing |
+| `git diff master -- tests/test_openai_adapter_parity.py` | **0 lines** — test file untouched |
+| Rich-balanced ↔ OpenAI-default equality | Held — `balanced` preset has no provider/model/language/number_lang/voice pins, so `effective.*` falls back to request fields → identical pipeline inputs as cycle-1 default. |
+
+## Out of scope (per triage T-3)
+
+- Maximal `SynthesizeRequest`-field expansion. The amendment is deliberately limited to `language` + `number_lang` + `voice`.
+- `input` and `stream` — intentionally per-request only.
+- `fast` preset pinning a smaller Qwen variant — none currently in the allow-list; left default.
+
+## Story coverage
+
+- Amends `FR-PR-03` (preset schema enumeration).
+- Adds `UAT-PR-18` coverage.
+- No changes to `BR-10`, `FR-PR-07`, `FR-PR-08`, `FR-PR-09`, `FR-PR-13` semantics — the new fields ride the existing precedence + WARN + ignored-knobs + allow-list infrastructure.
+
+---
+
+### HF-3
+
+# HF-3 — Unknown-provider error message clarity
+
+**Branch:** `sprint-7-HF-3-fix`
+**Commit:** `fe716b9`
+**Baseline:** 426 passed → **428 passed**, 2 skipped, 3 deselected, 1 xfailed.
+
+## Problem
+
+| | |
+|---|---|
+| Reported by | PO (sprint-7 mid-review, T-1) |
+| Symptom | User passed `provider: "qwen"` and got `"provider 'qwen' is not supported"` — no list of valid provider names, no hint that `qwen` is a model family rather than a provider engine. |
+| Impact | Discoverability bug: users cannot self-correct from the error alone. Forces a doc/source dive to learn the engine identifier vocabulary (`mlx_audio`, `voxtral`, `vllm-omni`). |
+
+## Root cause
+
+| | |
+|---|---|
+| Location | `src/llm_tts_api/services/tts_providers/registry.py::TTSProviderRegistry.get` |
+| Cause | Error message was a single sentence stating the rejected name was unsupported, with no enumeration of valid alternatives and no acknowledgement of the common provider-vs-model confusion. |
+| Why now | Sprint-7 work surfaced the `qwen` model family more prominently in presets/docs, increasing the chance users type `qwen` where the schema expects an engine identifier. |
+
+## Fix
+
+| | |
+|---|---|
+| File | `src/llm_tts_api/services/tts_providers/registry.py` |
+| Change | Error message now reads `"provider '<name>' is not supported. Valid providers: mlx_audio, voxtral, vllm-omni."`. When `<name>` matches a model-family heuristic (`/` in name, or prefix in `{qwen, voxtral-mini, voxtral-small, llama, mistral}`), the message appends a model-vs-provider hint pointing to `provider='mlx_audio'` with an example `model=` checkpoint. |
+| Stability | Error code (`invalid_parameter`), status (400), and `param='provider'` unchanged. Exception class (`OpenAIHTTPException`) unchanged. No taxonomy churn. |
+| Heuristic rationale | `voxtral` is a valid provider name — a bare `voxtral` rejection cannot happen. `voxtral-mini`/`voxtral-small` are released model checkpoints whose plain names a user might paste. Random invalid names (e.g. `"nonexistent"`) get the valid-providers list without the noisy hint. |
+| Docstring | Added a 3-line note on the class docstring clarifying engine-identifier vs checkpoint vocabulary. |
+
+## Tests
+
+| | |
+|---|---|
+| File | `tests/test_tts_provider_registry.py` |
+| Added | `test_registry_rejects_unknown_provider` (rewritten): asserts `Valid providers:` + all three names; asserts hint is **not** present for `"nonexistent"`. |
+| Added | `test_registry_rejects_qwen_with_model_vs_provider_hint`: asserts list + `model family` hint for `"qwen"`. |
+| Added | `test_registry_rejects_model_path_with_hint`: asserts hint for `"Qwen/Qwen3-TTS-12Hz-0.6B-Base"` (slash heuristic). |
+| TDD | RED captured (initial run failed on missing `Valid providers:` substring). GREEN reached on minimal fix. No production code preceded the failing test. |
+
+## Files created
+
+_(none)_
+
+## Files changed
+
+- `src/llm_tts_api/services/tts_providers/registry.py` — message wording + heuristic + docstring.
+- `tests/test_tts_provider_registry.py` — new + rewritten assertions.
+
+## Gates
+
+| Gate | Result |
+|---|---|
+| `uv run ruff check .` | All checks passed |
+| `uv run ruff format --check .` | 103 files already formatted |
+| `uv run mypy --strict src/` | Success: no issues found in 57 source files |
+| `uv run pytest` | 428 passed, 2 skipped, 3 deselected, 1 xfailed (baseline +2) |
+| `uv run pip-audit` | No known vulnerabilities |
+
+## NFR-PT-05 (S-018 paired UAT)
+
+HF-3 is a string-formatting change inside the rejection branch of `TTSProviderRegistry.get`. The success path is untouched; no synthesis code is reached. Full test suite (incl. S-018 paired-UAT coverage) green — no regression.
+
+## Out of scope (per triage T-1)
+
+- README excerpt updates — owned by HF-1.
+- Aliasing `qwen → mlx_audio` — explicitly rejected.
+- Renaming `mlx_audio → qwen-mlx` — explicitly rejected.
+- Error-code taxonomy or `X-Provider` header changes — untouched.
+
+---
+
+### HF-1
+
+# HF-1 — Cycle-2 docs catch-up (pulled forward from S-036)
+
+**Branch:** `sprint-7-HF-1-fix`
+**Worktree:** `.worktrees/sprint-7/HF-1`
+**Base:** `3fa43d1` (post-HF-2 + post-HF-3 master)
+**Commit:** `3a972e7` (`docs(cycle-2): HF-1 README + diagrams + OpenAPI + examples.http catch-up`)
+**Triage:** Resolution T-4 in `docs/specs/triage/sprint-7-mid-review-triage.md`
+
+## Problem
+
+Cycle-2 spine landed in master (S-027 preset registry, S-028 request-time resolver, S-029 hot-reload) along with hotfixes HF-2 (PresetDefaults expansion: `language` / `number_lang` / `voice`; quality preset now pins `mlx_audio` + `Qwen/Qwen3-TTS-12Hz-0.6B-Base`) and HF-3 (unknown-provider error lists valid providers + flags model-vs-provider confusion). Documentation — README, diagrams, OpenAPI, examples.http — still reflected the cycle-1 state. examples.http in particular predated cycle 2 entirely.
+
+User demand (triage T-4) was explicit: bring ALL documentation up to current master NOW, not defer to S-036.
+
+## Root cause
+
+S-036 (cycle-2 docs refresh) was scheduled for the LAST cycle-2 sprint. Triage decision T-4 pulled it forward as a hotfix with NARROWED scope — only the surfaces already in master at HF-1 dispatch time, deferring postproc/format-ext/quality-stream-downgrade docs to a future S-036.
+
+## Fix
+
+| Surface | Change |
+|---------|--------|
+| `README.md` | Added 3 cycle-2 sections (Audio presets, Provider vs model, Voice cloning); added `preset` field to the SynthesizeRequest table; added `X-Preset-Effective` + `X-Preset-Ignored-Knobs` to the response-header inventory with worked example showing the sorted-key shape; added a precedence-demo cURL example. |
+| `docs/diagrams/class/presets.md` | NEW Mermaid class diagram covering `PresetConfig` / `PresetEntry` / `PresetDefaults` (with HF-2 fields) / `PresetPostprocess` / `PresetRegistry` (frozen dataclass) / `EffectiveSynthesisConfig` / `resolve_preset` / `PresetRegistryReloader` / `ConfigWatcher` + the three startup-fail error types. |
+| `docs/diagrams/class/overview.md` | Added `preset_registry` + `preset_registry_reloader` to `AppState`; added `PresetRegistry` + `PresetRegistryReloader` classes; updated `synthesize_core` signature and added two new dependency edges; linked the two new sequence diagrams + the new class diagram. |
+| `docs/diagrams/sequence/preset-resolution.md` | NEW. Traces request → `Depends(get_preset_registry_snapshot)` → `resolve_preset` → `EffectiveSynthesisConfig` → `synthesize_core` headers. Calls out unknown-preset 400 branch and the NFR-PR-04 in-flight snapshot invariant. |
+| `docs/diagrams/sequence/preset-hot-reload.md` | NEW. Traces file mtime change → `ConfigWatcher` → `PresetRegistryReloader.reload_once` → parse + validate → atomic swap on success; WARN + keep prior on each failure type (parse, default-missing, provider-pin-invalid). |
+| `docs/diagrams/sequence/synthesize-rich.md` | Added the preset-resolution step at the top of both buffered and streamed paths; added preset cross-links + clarified header strip on the OpenAI adapter. |
+| `docs/diagrams/sequence/create-speech.md` | Added the preset-resolution step + `X-Preset-Effective` / `X-Preset-Ignored-Knobs` to the `_RICH_ONLY_HEADERS` strip list narrative; added NFR-PT-05 paired-UAT note + cross-links. |
+| `docs/openapi/openapi.yaml` | Added `preset` field on `SynthesizeRequest` (open string with `examples: [fast, balanced, quality]` per FR-PR-12); added `X-Preset-Effective` + `X-Preset-Ignored-Knobs` to `/v1/tts/synthesize` 200 response headers; added `config_error` to the `ErrorDetail.type` enum; added `ConfigError` reusable response; updated `InvalidRequest` description to mention `preset_unknown`. |
+| `examples.http` | Full refresh modeled on `llm-image-api/examples.http`. Sections in order: health/ready, catalog probes, default-preset synthesis, explicit preset, precedence demo (preset+override) with header annotations, unknown-preset negative example, voice-cloning roundtrip (register → synthesize → fetch audio → delete), OpenAI-compatible /v1/audio/speech, HF-3 wrong-provider negative example, voice_required negative example, 501-stub spot checks. Italian narration throughout. |
+
+## Files created
+
+- `docs/diagrams/class/presets.md`
+- `docs/diagrams/sequence/preset-resolution.md`
+- `docs/diagrams/sequence/preset-hot-reload.md`
+- `docs/planning/sprints/.pending/HF-1-impl.md` (this file)
+- `docs/planning/sprints/.pending/HF-1-status.txt`
+
+## Files changed
+
+- `README.md`
+- `docs/diagrams/class/overview.md`
+- `docs/diagrams/sequence/synthesize-rich.md`
+- `docs/diagrams/sequence/create-speech.md`
+- `docs/openapi/openapi.yaml`
+- `examples.http`
+
+## Out of scope (deferred to S-036)
+
+- Postprocess (`rms_normalize` / `silence_trim` / `denoise`) tuning docs — S-031 not landed.
+- WAV24 / FLAC end-to-end format docs — S-033 not landed (the soft-ignore today is documented; the eventual end-to-end is not).
+- Quality-stream-downgrade UX docs — S-032 not landed.
+
+## Gates
+
+```
+uv run ruff check .                # All checks passed
+uv run ruff format --check .       # 103 files already formatted
+uv run mypy --strict src/          # Success: no issues found in 57 source files
+uv run pytest                      # 432 passed, 2 skipped, 3 deselected, 1 xfailed
+uv run pip-audit                   # No known vulnerabilities found
+python -c "import yaml; yaml.safe_load(open('docs/openapi/openapi.yaml'))"  # OK
+```
+
+NFR-PT-05 (paired UAT, S-018) — no source code changed in this HF; the existing parity tests (`tests/test_openai_adapter_parity.py`) continue to pin byte-identity between the rich endpoint and the OpenAI adapter, including the strip of `X-Preset-Effective` + `X-Preset-Ignored-Knobs`. Full suite green confirms no regression.
+
+---
+
