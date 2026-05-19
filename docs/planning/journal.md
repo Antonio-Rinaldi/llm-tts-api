@@ -12,12 +12,16 @@
 
 | Metric | Value |
 |---|---|
-| Total stories | 25 |
-| User stories | 9 |
-| Technical stories | 16 |
-| Parallel groups | 5 (A–E) |
-| Critical path length | 8 stories (A → B → B' → C → D → E) |
-| Functional areas covered | 13/13 (SRS §4.1–4.13) |
+| Cycle-1 stories | 25 (S-001..S-026, all DONE) |
+| Cycle-2 stories | 10 (S-027..S-036, all Not started) |
+| **Total** | **35** |
+| User stories (cycle 1) | 9 |
+| Technical stories (cycle 1 + cycle 2) | 26 |
+| Cycle-1 parallel groups | 5 (A–E) |
+| Cycle-2 parallel groups | 5 (F–J) |
+| Critical path length (cycle 1) | 8 stories |
+| Critical path length (cycle 2) | 5 stories |
+| Functional areas covered | 16/16 (SRS §4.1–4.16) |
 
 **Update note (post-OQ-3):** Voice enrollment was pulled into this cycle. The original S-014 (inline ref_audio on synthesize) is removed; replaced by **S-022..S-025** (voice repository abstraction + CRUD endpoints + optional backends). S-011 is re-scoped from "voice map hot-reload" to "voice seed ingestion". S-013 loses the `ref_audio` request field.
 
@@ -507,6 +511,260 @@ All 13 areas covered; no gaps.
   - OQ-5: two Docker variants — default + CUDA (S-020).
   - OQ-7: `docs/perf/baseline.md` in-repo (S-002, S-021).
 
-## Next step
+## Next step (cycle 1)
 
-Run the `sprint-planner` skill against this journal to break it into sprint increments. A natural first sprint is Group A in full (foundation, no deps); a natural second sprint is Group B; etc. — but the sprint planner is the right tool to finalize that.
+Cycle 1 closed — all 25 stories DONE across Sprints 1–6. Master at 380 tests passing, mypy --strict clean across 52 source files. See `docs/planning/sprint-log.md` for cycle-1 sprint dispositions.
+
+---
+
+# Cycle 2 — Dual-mode audio presets
+
+**Status:** Draft
+**Date:** 2026-05-19
+**Cycle:** Dual-mode audio generation (named presets `fast`/`balanced`/`quality` + post-processing pipeline + response_format extension)
+**Sources:** `docs/specs/software-spec.md` §4.14-4.16, `docs/specs/analyst-frs.md` §4.14-4.16 (FR-PR/PP/FMT), `docs/specs/writer-nfr.md` §11b, `docs/specs/requests/dual-mode-presets-request.md`
+
+## Cycle-2 overview
+
+| Metric | Value |
+|---|---|
+| New stories | 10 (S-027..S-036) |
+| User stories | 0 |
+| Technical stories | 10 |
+| Parallel groups | 5 (F–J) |
+| Critical path length | 5 stories (F → G → H → I → J) |
+| Functional areas covered | 3/3 (SRS §4.14, §4.15, §4.16) |
+
+### Cycle-2 dependency overview
+
+```
+Group F (cycle-2 foundation, no internal deps)
+   S-027 Presets config + Pydantic schema + startup validation
+
+Group G (depends on F)
+   S-028 Preset resolution + EffectiveSynthesisConfig            ← S-027
+   S-029 Preset hot-reload + in-flight snapshot                  ← S-027
+
+Group H (depends on G; all parallel)
+   S-030 Custom-preset isolation (OpenAPI/v1/models lifecycle)   ← S-028
+   S-031 Post-processing service-layer module                    ← S-028
+   S-033 Format extension (wav24/flac + per-provider capability) ← S-028
+
+Group I (depends on H)
+   S-032 Quality-stream downgrade                                ← S-031
+   S-034 Observability log + cycle-2 response headers            ← S-028, S-031, S-033
+
+Group J (terminal — depends on all cycle-2 production code)
+   S-035 S-018 byte-identity regression gate + tamper assertion  ← all above
+   S-036 Cycle-2 docs refresh (README + diagrams + OpenAPI)      ← all above
+```
+
+## Cycle-2 Stories
+
+### Group F — Cycle-2 foundation (no internal deps)
+
+#### S-027: Presets configuration foundation
+**Type:** Technical
+**Status:** Not started
+**Depends on:** None (cycle-1 S-003 lifespan + S-012 Settings are DONE)
+**Parallel group:** F
+**Refs:** FR-PR-01, FR-PR-02, FR-PR-05, FR-PR-13, NFR-SE-09, NFR-PR-02
+**Description:** Introduce `config/presets.json` and the new `PresetConfig` Pydantic model (`extra="forbid"`) at the package boundary. Ship three built-in presets `fast`/`balanced`/`quality` per the cycle-2 SRS §4.14. Wire startup validation into the lifespan: parse `presets.json`, validate the schema, validate the file-permission posture (NFR-SE-09: owned-by-service-user + not world-writable), validate the `TTS_DEFAULT_PRESET` env var resolves to a defined preset name, validate every preset-pinned `(provider, model)` is in the corresponding provider's allow-list. Each validation failure exits non-zero with the corresponding `config_error.*` code from cycle-2 §4.16. The loaded registry hangs off `app.state.preset_registry`.
+**Acceptance criteria:**
+- `config/presets.json` exists with the three built-in presets (defaults derived from cycle-2 SRS §4.14, the cycle-1 baseline, and the per-preset response_format from FR-FMT-05).
+- `PresetConfig` Pydantic model rejects unknown fields with a clear field-path message.
+- Startup wires `app.state.preset_registry` from the validated file (or exits with `config_error.presets_invalid`).
+- Startup refuses to start when `presets.json` is world-writable or owner-mismatched (`config_error.presets_unsafe_permissions`).
+- Startup refuses to start when `TTS_DEFAULT_PRESET` names an unknown preset.
+- Startup refuses to start when any preset pins a `(provider, model)` outside the provider allow-lists (`config_error.preset_provider_invalid`).
+- Resolution overhead from the loaded registry is ≤1 ms p95 (NFR-PR-02).
+- Covered by UAT-PR-11, UAT-PR-12, UAT-PR-13, UAT-PR-14.
+
+---
+
+### Group G — Resolution & lifecycle (depend on F)
+
+#### S-028: Preset resolution + EffectiveSynthesisConfig
+**Type:** Technical
+**Status:** Not started
+**Depends on:** S-027
+**Parallel group:** G
+**Refs:** FR-PR-04, FR-PR-06, FR-PR-07, FR-PR-08, FR-PR-09, FR-PR-10, BR-10, BR-12, BR-17
+**Description:** Add `preset: str | None` to `SynthesizeRequest` (open string at Pydantic, validated against the loaded registry by the resolver — see FR-PR-12 / S-030). Implement the resolver in `services/synthesize_service.py` producing a frozen `EffectiveSynthesisConfig` dataclass consumed downstream by all synthesis paths. Precedence per BR-10: explicit field > preset defaults > Settings / VoiceRecord defaults. Unknown preset name ⇒ `400 validation_error.preset_unknown` listing available preset names. Conflict between explicit field and preset pin ⇒ explicit wins + WARN log + `X-Preset-Effective` header populated. Provider-incompatible knobs soft-ignored + `X-Preset-Ignored-Knobs` header. `POST /v1/audio/speech` (OpenAI adapter) ignores any body/query `preset` and always resolves to `TTS_DEFAULT_PRESET` (BR-12 — preserves S-018 byte-identity).
+**Acceptance criteria:**
+- `SynthesizeRequest.preset` is `str | None`; not `Literal[...]` (per FR-PR-04 — accommodates operator-defined presets).
+- Unknown preset returns 400 `validation_error.preset_unknown` with the available preset names in the message.
+- Explicit field overrides preset pin; WARN log records the override with request_id; `X-Preset-Effective` shows resolved values.
+- Provider-incompatible knobs are soft-ignored; `X-Preset-Ignored-Knobs` lists them.
+- OpenAI adapter ignores body/query preset; always applies `TTS_DEFAULT_PRESET`.
+- Covered by UAT-PR-01..07.
+
+---
+
+#### S-029: Preset hot-reload + in-flight snapshot
+**Type:** Technical
+**Status:** Not started
+**Depends on:** S-027 (NOT S-028 — registry primitive is orthogonal to resolution code)
+**Parallel group:** G
+**Refs:** FR-PR-11, NFR-SE-10, NFR-PR-03, NFR-PR-04, BR-11, RISK-3, RISK-PR-3
+**Description:** Reuse the `watchfiles` + polling-fallback primitive from cycle-1 S-011 (voice-map ingestion) to watch `config/presets.json`. On change notification: parse + validate the new file against `PresetConfig`; **only if validation succeeds** atomically swap `app.state.preset_registry`; on validation failure, log WARN with field-path and keep the prior good registry live (NFR-SE-10 attack-tolerant). In-flight requests MUST snapshot the registry at request-start and use that snapshot to completion (NFR-PR-04 — captured via a request-scoped attribute set in the middleware or resolver entry point). Reload latency ≤ 2 s (NFR-PR-03), matching cycle-1 voice-map reload SLO.
+**Acceptance criteria:**
+- Watcher fires on `presets.json` mtime change within ≤ 2 s on Linux/macOS; polling fallback used in Docker per RISK-3.
+- Valid new file is atomically swapped into `app.state.preset_registry`.
+- Invalid new file is rejected with WARN log; prior registry stays live; service continues serving.
+- In-flight requests use the registry snapshot taken at request-start.
+- Covered by UAT-PR-08, UAT-PR-09, UAT-PR-15.
+
+---
+
+### Group H — Consumers of resolution (depend on G; all parallel)
+
+#### S-030: Custom-preset isolation (OpenAPI / `/v1/models` lifecycle)
+**Type:** Technical
+**Status:** Not started
+**Depends on:** S-028
+**Parallel group:** H
+**Refs:** FR-PR-12
+**Description:** Codify the custom-preset isolation contract: operator-added presets in `config/presets.json` are usable on `POST /v1/tts/synthesize` (resolver accepts any name in the loaded registry) BUT are NOT enumerated in `/v1/models` and NOT in `docs/openapi/openapi.yaml`. The OpenAPI `preset` field remains `type: string` with the three built-ins as informational examples; custom names never appear. The S-019 `tests/test_docs_inventory.py` is extended to assert that `/v1/models` response body contains no preset names (defense in depth) and OpenAPI `preset` field type is `string`, not `Literal`. Includes a test that adds a custom preset and confirms it works on `/v1/tts/synthesize` AND is invisible to `/v1/models` + OpenAPI.
+**Acceptance criteria:**
+- A custom preset (e.g. `cinematic`) added to `presets.json` is usable on `/v1/tts/synthesize` after reload.
+- The same preset name does not appear in `/v1/models` response body anywhere.
+- `docs/openapi/openapi.yaml` `preset` field is open-string type.
+- Extended docs-inventory test pins both invariants.
+- Covered by UAT-PR-10.
+
+---
+
+#### S-031: Post-processing service-layer module
+**Type:** Technical
+**Status:** Not started
+**Depends on:** S-028
+**Parallel group:** H
+**Refs:** FR-PP-01..06, FR-PP-08, NFR-PP-01, NFR-PP-02, NFR-CP-03, BR-14
+**Description:** Create `src/llm_tts_api/services/audio_postprocess.py` exposing a pure-function pipeline `postprocess_audio(audio: bytes, *, rms_normalize: bool, silence_trim: bool, denoise: bool, settings: Settings) -> bytes`. Pipeline order (codified in module docstring): **denoise → silence_trim → rms_normalize**. Each step is a no-op when its flag is false. `rms_normalize` uses `settings.tts_normalize_db_default` (or the resolved request value) as the target dBFS. `silence_trim` uses `settings.tts_silence_trim_threshold_db` (default `-50 dBFS`) and preserves a 50 ms head/tail pad. `denoise` is feature-flagged: optional dep extra `[denoise]` adds `noisereduce` (or equivalent); when the extra is not installed and `denoise=true` is resolved, the step logs WARN and no-ops. The post-processing step runs after provider chunk assembly and before format conversion (FR-PP-08), in `services/synthesize_service.py::synthesize_core`. Buffer is request-scoped (NFR-PP-02 — no module-level retention, no logging of audio bytes). When any step runs, response header `X-Postprocess-Applied` lists the applied steps; absent when none.
+**Acceptance criteria:**
+- Module exists; pipeline order documented in module docstring + verifiable by code inspection.
+- `rms_normalize` produces decoded audio within ±0.5 dB of target dBFS on a deterministic fixture.
+- `silence_trim` removes ≥ leading silence preserving 50 ms pad; symmetric for trailing silence.
+- `denoise=true` without `[denoise]` extra logs WARN, no-ops, and `X-Postprocess-Applied` excludes `denoise`.
+- `X-Postprocess-Applied` absent when no step runs; lists applied steps otherwise.
+- Buffer is request-scoped (verified via code inspection — no module-level state).
+- Covered by UAT-PP-01, UAT-PP-02, UAT-PP-03, UAT-PP-04, UAT-PP-05, UAT-PP-07.
+
+---
+
+#### S-033: Format extension (wav24/flac + per-provider capability)
+**Type:** Technical
+**Status:** Not started
+**Depends on:** S-028
+**Parallel group:** H
+**Refs:** FR-FMT-01..07, NFR-FMT-01..03, NFR-PT-06, BR-15
+**Description:** Extend `SynthesizeRequest.response_format` from `Literal["wav"]` to `Literal["wav", "wav24", "flac"]`. Add `supported_response_formats: set[Literal["wav","wav24","flac"]]` capability to each `TTSProviderStrategy` (mlx_audio, voxtral, vllm_omni — measured day-one, not assumed). At request time: if active provider doesn't support the resolved `response_format`, return `400 validation_error.format_unsupported` with the supported set in the message. At startup: validate every preset-pinned `response_format` is in the auto-selected provider's `supported_response_formats`; otherwise `config_error.preset_provider_invalid`. Format conversion lives in the service layer (`synthesize_service.py`), runs AFTER post-processing AND AFTER provider chunk assembly, using `soundfile` (existing dep) for `wav24` (`subtype="PCM_24"`) and `flac`. Response `Content-Type` matches the resolved format: `audio/wav` for `wav`/`wav24`, `audio/flac` for `flac`. The `quality` preset's default `response_format` is `flac` (FR-FMT-05); fast/balanced stay at `wav`.
+**Acceptance criteria:**
+- Each provider declares a non-empty `supported_response_formats` set (mypy-strict-required).
+- `wav` (16-bit) still passes existing tests (no regression).
+- `wav24` produces decodable 24-bit PCM via `soundfile.read(...)` on a supporting provider.
+- `flac` produces decodable lossless audio whose decoded samples equal the wav reference within tolerance.
+- Unsupported format on active provider returns 400 `validation_error.format_unsupported` listing the supported set.
+- Preset pinning an unsupported format at startup ⇒ process exits with `config_error.preset_provider_invalid`.
+- `Content-Type` correct per format.
+- Covered by UAT-FMT-01..06.
+
+---
+
+### Group I — Composition (depend on H)
+
+#### S-032: Quality-preset streaming downgrade
+**Type:** Technical
+**Status:** Not started
+**Depends on:** S-031
+**Parallel group:** I
+**Refs:** FR-PP-07, NFR-PP-03, BR-13
+**Description:** In `services/synthesize_service.py::synthesize_core`, when the resolved `EffectiveSynthesisConfig` has `preset.name == "quality"` AND the request's `stream=true`, silently downgrade to buffered mode: bypass the trailer/streaming branch, run the full post-processing pipeline from S-031, and return a non-streaming response. Set response header `X-Stream-Downgraded: quality-postproc` to make the downgrade observable (NOT an error; documented behavior). No streaming trailers emitted on the downgrade path.
+**Acceptance criteria:**
+- `preset=quality` + `stream=true` request returns a buffered (non-chunked-transfer) response.
+- `X-Stream-Downgraded: quality-postproc` is set on the response.
+- `X-Postprocess-Applied` is populated (per S-031).
+- No streaming trailers emitted on the downgrade path.
+- Covered by UAT-PP-06.
+
+---
+
+#### S-034: Observability log + cycle-2 response headers
+**Type:** Technical
+**Status:** Not started
+**Depends on:** S-028, S-031, S-033
+**Parallel group:** I
+**Refs:** NFR-OP-06
+**Description:** Wire the per-synthesis INFO log line that captures: `request_id`, `resolved_preset`, `ignored_knobs` (comma-separated, possibly empty), `postprocess_applied` (comma-separated, possibly empty), `response_format`, `stream_downgraded` (boolean). Log line is payload-free per NFR-PV-02 (no `input` text, no audio bytes). Emitted at INFO level so operators can `grep resolved_preset=quality` for triage. Ensure header emission is centralized in `synthesize_service.py` so both rich and OpenAI paths funnel through one writer (OpenAI path then strips `X-Preset-*` etc. per cycle-1 S-017's `_RICH_ONLY_HEADERS`).
+**Acceptance criteria:**
+- One INFO-level log line per synthesis request carrying the six required fields.
+- Log line is payload-free.
+- `X-Preset-Effective`, `X-Preset-Ignored-Knobs`, `X-Postprocess-Applied` headers populated on rich path.
+- OpenAI path continues to strip rich-only headers (cycle-1 contract preserved).
+- Covered by UAT-PR-16 + indirectly by UAT-PR-04, UAT-PR-05, UAT-PP-05.
+
+---
+
+### Group J — Cycle-2 close-out (terminal — depend on all production code)
+
+#### S-035: S-018 byte-identity regression gate + tamper assertion
+**Type:** Technical
+**Status:** Not started
+**Depends on:** S-027, S-028, S-029, S-030, S-031, S-032, S-033, S-034 (all cycle-2 code complete)
+**Parallel group:** J
+**Refs:** NFR-PT-05, NFR-OP-07, UAT-PR-17, RISK-PR-5
+**Description:** Codify the S-018 byte-identity invariant as a cycle-2 regression gate. Run the existing `tests/test_openai_adapter_parity.py` (the S-018 paired UAT, untouched since cycle 1) against post-cycle-2 master and assert: (a) all paired tests pass — rich(`preset=balanced`, no overrides) body bytes sha256-equal OpenAI-path body bytes for the same effective request; (b) the test file itself is byte-identical to its cycle-1 form (`git diff master tests/test_openai_adapter_parity.py` empty). Adds a new tamper-detection test (`tests/test_cycle2_byte_identity_gate.py` or extension to `test_docs_inventory.py`) that asserts `tests/test_openai_adapter_parity.py` SHA256 is stable. No new code in `src/`; this is a gate, not a feature.
+**Acceptance criteria:**
+- `uv run pytest tests/test_openai_adapter_parity.py -v` passes byte-identically.
+- `git diff master tests/test_openai_adapter_parity.py` is empty.
+- Tamper-detection test exists and pins the sha256 of `tests/test_openai_adapter_parity.py`.
+- Covered by UAT-PR-17.
+
+---
+
+#### S-036: Cycle-2 documentation refresh
+**Type:** Technical
+**Status:** Not started
+**Depends on:** S-027, S-028, S-029, S-030, S-031, S-032, S-033, S-034 (docs reflect master)
+**Parallel group:** J
+**Refs:** FR-DC convention (cycle-1 S-019 pattern), all cycle-2 NFRs that warrant operator documentation
+**Description:** Refresh README, `docs/diagrams/`, and `docs/openapi/openapi.yaml` for cycle 2. README: new "Presets" section (3 built-ins + how to add custom + table of preset defaults), "Post-processing" section (3 steps + denoise extra), "Response formats" section (wav/wav24/flac + per-provider capability matrix), updated env-var inventory (`TTS_DEFAULT_PRESET`, `TTS_SILENCE_TRIM_THRESHOLD_DB`, etc. from S-027/S-031), new error codes table (`validation_error.preset_unknown`, `validation_error.format_unsupported`, `config_error.presets_invalid`, `config_error.preset_provider_invalid`, `config_error.presets_unsafe_permissions`), updated header inventory (X-Preset-Effective / X-Preset-Ignored-Knobs / X-Postprocess-Applied / X-Stream-Downgraded), per-preset TTFB targets per NFR-PR-01 (with "measured on M1 Max; YMMV" disclaimer). Diagrams: new sequence diagram `preset-resolution.md` (request → resolver → EffectiveSynthesisConfig → downstream), new sequence diagram `quality-postproc.md` (postproc pipeline order + stream downgrade), updated `synthesize-rich.md` to show postproc + format conversion steps. OpenAPI: `preset` field added as open-string with built-ins as examples; `response_format` enum extended; new error responses for the 5 new codes; new headers documented. Extends `tests/test_docs_inventory.py` to assert every new env var, every new error code, every new header appears in README.
+**Acceptance criteria:**
+- README has the new sections per the description; every new env var documented; every new error code in the taxonomy table; every new header listed.
+- New + updated diagrams committed under `docs/diagrams/sequence/`.
+- OpenAPI spec includes `preset` field + extended `response_format` enum + new error responses + new headers.
+- `tests/test_docs_inventory.py` extended; passes.
+- Covered by extending cycle-1 UAT-DC-01..03 + cycle-2 UAT-PR-10 + manual doc review.
+
+---
+
+## Cycle-2 functional-area → story coverage
+
+| SRS area | Covered by |
+|---|---|
+| 4.14 Audio-generation presets | S-027 (foundation), S-028 (resolution), S-029 (hot-reload), S-030 (custom isolation), S-034 (headers/logs) |
+| 4.15 Audio post-processing | S-031 (module + pipeline), S-032 (quality stream downgrade) |
+| 4.16 Response format extension | S-033 |
+| Documentation | S-036 |
+| Byte-identity gate | S-035 |
+
+All 3 cycle-2 functional areas covered; 17 cycle-2 NFRs all hooked to at least one story; 30 cycle-2 UAT cases all traced to a story.
+
+## Cycle-2 Highlights
+
+- **Critical path** (cycle-2): S-027 → S-028 → {S-031 | S-033} → S-034 → S-035/S-036 (≈5 stories serial; everything else parallels at Groups G/H/I).
+- **Foundation gate**: S-027 must land first — everything else reads `app.state.preset_registry`.
+- **Most consequential single stories**:
+  - **S-028** (resolution + EffectiveSynthesisConfig) — single resolution site; centralization is what keeps NFR-PT-05 (S-018 byte-identity) holding.
+  - **S-035** (byte-identity gate) — the load-bearing regression gate of the whole cycle.
+- **Highest-risk stories mapped to risks**:
+  - S-029 → RISK-3 (watchfiles in Docker — same mitigation as cycle-1 S-011)
+  - S-031 → RISK-PR-4 (postproc overhead exceeds 200ms/s denoise budget on low-spec hosts)
+  - S-033 → RISK-PR-2 (per-provider format capability declared by inspection vs measurement)
+  - S-035 → RISK-PR-5 (S-018 byte-identity breaks subtly under preset resolution drift)
+- **All cycle-2 OQs resolved** (see SRS §10). 10 PO decisions D1-D10 + 10 BA/TW round resolutions all traced through.
+
+## Cycle-2 Next step
+
+Run the `sprint-planner` skill against the cycle-2 stories. A natural first cycle-2 sprint is Group F + Group G in full (4 stories: S-027 alone, then S-028 + S-029 in parallel). A natural second sprint covers Group H (S-030 + S-031 + S-033 in parallel). A natural third sprint closes with Groups I + J (S-032, S-034, S-035, S-036).
