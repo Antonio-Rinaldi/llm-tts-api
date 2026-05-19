@@ -1478,3 +1478,234 @@ S-028 remains READY-FOR-REVIEW post-Path-B. Sprint can proceed to sprint-level i
 
 ---
 
+
+---
+
+# Sprint 7 — Sprint-Level Re-Review (Phase 1P, POST Path B hotfix integration)
+
+**Reviewer:** code-reviewer (sprint-level, RE-REVIEW)
+**Date:** 2026-05-19
+**Worktree:** `.worktrees/sprint-7/sprint-rereview` (branch `sprint-7-sprint-rereview`, clean tree)
+**Baseline at re-review:** master @ `003dee1` (after the two post-hotfix story re-reviews + HF-1/HF-2/HF-3 hotfix assembly)
+**Scope:** Cross-story coherence of the cycle-2 spine (S-027 + S-028 + S-029) AFTER Path B hotfixes (HF-2 schema expansion, HF-3 provider error clarity, HF-1 docs catch-up) landed in master. Story-level re-reviews of S-027 and S-028 are both APPROVED; this is the FINAL sprint-level review gate before re-presenting Sprint 7 to the user.
+
+## Verdict
+
+**APPROVED — no sprint-level drift introduced by Path B.** The cycle-2 spine (registry → resolution → hot-reload) still composes coherently with HF-2's `PresetDefaults` widening, HF-3's error-message change, and HF-1's documentation refresh. NFR-PT-05 S-018 byte-identity invariant is intact. Sprint 7 is ready to be re-presented to the user for whole-sprint approval.
+
+No code changes required.
+
+## Gates re-run on this worktree
+
+| Gate | Result |
+|---|---|
+| `uv run pytest tests/test_openai_adapter_parity.py -v` | **3 passed** (NFR-PT-05 invariant intact) |
+| `git diff master -- tests/test_openai_adapter_parity.py` | **0 lines** (byte-identical to master) |
+| `uv run pytest` (full suite) | **432 passed, 2 skipped, 3 deselected, 1 xfailed** — matches baseline |
+| `uv run mypy --strict src/` | **Success: no issues found in 57 source files** — matches baseline |
+| `git status` | clean tree on `sprint-7-sprint-rereview` |
+
+Story-level re-reviews previously confirmed: S-027 ✅ no drift; S-028 ✅ no drift; S-029 not re-reviewed (HF-2 / HF-3 do not touch the watcher/reloader surface, HF-1 is docs-only).
+
+## 1. Cycle-2 spine coherence post Path B
+
+### 1.1 S-027 → S-028 contract — locked Service Interface still honored
+
+The five locked-contract assertions (sprint-impl-7.md §"Locked-contract checklist") survive HF-2:
+
+| Contract | Post-hotfix status |
+|---|---|
+| `PresetRegistry` snapshot type — frozen dataclass, atomic swap | Unchanged. HF-2 widened a leaf shape (`PresetDefaults`), not the wrapper. |
+| `PresetEntry` / `PresetDefaults` / `PresetPostprocess` schema — `extra="forbid"` everywhere | HF-2 added three optional `str \| None` fields to `PresetDefaults`; forbid invariant + field-path formatter intact. |
+| `resolve_preset(request, snapshot, settings)` signature — pure, no `app.state` read | HF-2 added field merging via the existing `_pick` closure; arity, purity, and snapshot-only-input semantic unchanged. |
+| `app.state.preset_registry` slot — only written by lifespan + reloader callback | Unchanged. |
+| Error-code ownership — three S-027 codes + `preset_unknown` in S-028 | Unchanged. HF-3 did NOT introduce a new code (kept `invalid_parameter` for provider rejection); HF-2 did NOT introduce a new code. |
+
+### 1.2 S-027 ↔ HF-2 (FR-PR-13 cross-check is the load-bearing seam)
+
+The shipped `quality` preset now pins `provider: "mlx_audio"` + `model: "Qwen/Qwen3-TTS-12Hz-0.6B-Base"`. Startup validation against the default deployment posture:
+
+- `tts_mlx_audio_model_default = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"` (`Settings.config.py:67`)
+- `mlx_audio` allow-list is computed as `[fallback_default, *allowed_models]` (`config.py:286`), so the model is always present even when `TTS_MLX_AUDIO_MODEL_ALLOWED` is unset.
+- `validate_preset_providers` walks pinned `(provider, model)` pairs against this list. Default install → startup succeeds.
+
+Regressed by two HF-2 tests (`test_hf2_quality_preset_pins_provider_and_model`, `test_hf2_balanced_preset_leaves_provider_and_model_unset`). Both green in the 432-test suite.
+
+### 1.3 S-028 ↔ HF-2 (resolver merges the three new fields per BR-10)
+
+- `EffectiveSynthesisConfig` carries `language`, `number_lang`, `voice` (`synthesize_service.py:79-105`) with safe `None` defaults.
+- `resolve_preset` merges them via `_pick`; BR-10 precedence (explicit request > preset defaults > Settings/VoiceRecord defaults) is shared with the legacy fields → identical conflict-detection + WARN log + `effective_overrides` recording semantics.
+- `_format_preset_effective_header` (`synthesize_service.py:115-142`) emits the three new fields conditionally when set, then sorts the whole list alphabetically. Wire shape stays deterministic and matches the HF-1 README example verbatim.
+
+### 1.4 S-028 voice-fallback chain (FR-PR-03 enablement)
+
+`synthesize_service.py:579` resolves `voice_id = (payload.voice or effective.voice or "").strip()`. The S-028 re-review flagged the `payload.voice or effective.voice` as slightly redundant (since `_pick` already merges payload over preset), and confirmed it is harmless — when `payload.voice` is set, `effective.voice == payload.voice`, so the `or` short-circuits identically. This is the workflow enabled by HF-2 + FR-PR-03 (a preset can supply the voice; the client request can be `{"input": "...", "preset": "audiobook_it"}` and skip `voice_required`).
+
+Not a defect. Cleared.
+
+### 1.5 S-029 ↔ HF-2 (hot-reload of a wider schema)
+
+`PresetRegistryReloader.reload_once` re-runs the full startup validation chain (parse via `PresetConfig` → permission posture is startup-only by RISK-PR-3 → `validate_preset_providers`). The widened `PresetDefaults` rides this chain transparently because:
+
+- The schema is the boundary; `extra="forbid"` ensures unknown JSON keys still error on reload.
+- `validate_preset_providers` reads only `entry.defaults.provider` / `entry.defaults.model`, which existed pre-HF-2.
+- The atomic swap operates on the `PresetRegistry` wrapper, not on field shape.
+
+No reloader changes were required for HF-2 — verified by full-suite green and by direct inspection of `PresetRegistryReloader.reload_once` (untouched by HF-2 commit `576e1ae`).
+
+### 1.6 HF-3 ↔ S-028 runtime path
+
+HF-3 changed the rejection-branch error string in `TTSProviderRegistry.get`. S-028's `resolve_preset` does NOT call this method; provider lookup happens later in `synthesize_core::_resolve_provider_and_model` (`synthesize_service.py:308`). HF-3 surfaces through S-028 only as a clearer downstream error string — purely behavioural, no signature/contract change.
+
+The HF-3 heuristic-driven model-vs-provider hint composes safely with HF-2's quality preset:
+
+- A request with `provider: "qwen"` (no preset) gets the HF-3 hint pointing to `provider='mlx_audio'` + the Qwen checkpoint.
+- A request with `preset: "quality"` and no explicit provider override succeeds (quality pins `mlx_audio` which IS registered).
+- A request with `preset: "quality"` + explicit `provider: "qwen"` override → explicit wins (BR-10) → reaches `TTSProviderRegistry.get` with `"qwen"` → HF-3 error fires correctly.
+
+All three paths exercised by the 432-test suite.
+
+## 2. Documentation coherence (HF-1 ↔ HF-2 + HF-3)
+
+HF-1 is the "docs reflect code" hotfix. Spot-checked against the actual runtime behaviour established by HF-2 + HF-3:
+
+### 2.1 README `X-Preset-Effective` example matches `_format_preset_effective_header`
+
+README §"Audio presets" shows:
+
+```
+X-Preset-Effective: quality(language=it,max_sentences_per_chunk=3,model=Qwen/Qwen3-TTS-12Hz-0.6B-Base,normalize_db=-20.0,provider=mlx_audio,response_format=flac,temperature=0.8,top_p=0.95)
+```
+
+Hand-verified against `_format_preset_effective_header` (`synthesize_service.py:115-142`):
+
+- Field set when quality preset is resolved with `language: "it"` override: `provider, model, temperature, top_p, max_sentences_per_chunk, normalize_db, language, response_format` → 8 keys.
+- Alphabetical sort: `language, max_sentences_per_chunk, model, normalize_db, provider, response_format, temperature, top_p` — matches the README example exactly.
+- `number_lang` and `voice` are absent (quality preset doesn't pin them, override doesn't set them) → correctly omitted by the `if cfg.<field> is not None` guards.
+
+✅ Doc matches runtime.
+
+### 2.2 README quality-preset description matches `config/presets.json`
+
+README §"Audio presets" table row for `quality`:
+> `mlx_audio` + `Qwen/Qwen3-TTS-12Hz-0.6B-Base` … `language=en`, `response_format=flac` (soft-ignored — see note), `postprocess.rms_normalize=true`, `postprocess.silence_trim=true`.
+
+Verified against `config/presets.json`:
+```json
+"quality": {
+  "defaults": {
+    "provider": "mlx_audio",
+    "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    ...
+    "response_format": "flac",
+    "language": "en",
+    "postprocess": { "rms_normalize": true, "silence_trim": true, "denoise": false }
+  }
+}
+```
+
+✅ Match. The "soft-ignored" note is also accurate — `_PIPELINE_SUPPORTED_FORMATS = frozenset({"wav"})` (`synthesize_service.py:76`) means `response_format=flac` lands in `ignored_knobs` until S-033 ships format extension.
+
+### 2.3 examples.http uses default-preset semantics correctly
+
+- "Basic synthesis with the default preset" (no `preset` field) → resolves to `TTS_DEFAULT_PRESET` (ships `balanced`); annotated expected `X-Preset-Effective: balanced(...)`. ✅
+- "Quality preset, buffered" → `"preset": "quality"`; annotation lists `provider=mlx_audio`, `model=Qwen/...`, `language=en`, `response_format=flac`, plus `X-Preset-Ignored-Knobs: response_format`. ✅ — `response_format=flac` IS soft-ignored against `_PIPELINE_SUPPORTED_FORMATS={"wav"}`.
+- "Quality preset + explicit language override (Italian)" → demonstrates BR-10 precedence (`X-Preset-Effective: quality(language=it,...)`). ✅
+- "Unknown preset" negative case → 400 `validation_error.preset_unknown` with available preset names. ✅ Matches `resolve_preset` error path.
+- HF-3 wrong-provider negative example → quotes the exact HF-3 message template ("Valid providers: mlx_audio, voxtral, vllm-omni." + the qwen hint). ✅
+- Voice-cloning roundtrip (Step 1 register → Step 2 synthesize → Step 3 delete) → matches the cycle-1 voice-store-as-canonical decision (S-022).
+- OpenAI-compatible `/v1/audio/speech` → comment correctly notes that the rich-only headers (incl. `X-Preset-Effective`, `X-Preset-Ignored-Knobs`) are stripped on this path (FR-EP-04 + S-028 T4).
+
+✅ All examples coherent with code.
+
+### 2.4 OpenAPI updates match S-028/HF-2 wire surface
+
+`docs/openapi/openapi.yaml`:
+
+- `SynthesizeRequest.preset` field — open string, with `examples: [fast, balanced, quality]` per FR-PR-12. ✅ Matches `SynthesizeRequest.preset: str | None`.
+- `X-Preset-Effective` + `X-Preset-Ignored-Knobs` declared on `/v1/tts/synthesize` 200 response headers with "Stripped by the OpenAI adapter" caveat. ✅ Matches `_RICH_ONLY_HEADERS` strip-set extension noted in S-028 T4.
+- `ErrorDetail.type` enum includes `config_error`. ✅ Matches `errors.py` taxonomy.
+- `ConfigError` reusable response references the three S-027 codes. ✅
+- `InvalidRequest` description mentions `preset_unknown` (FR-PR-07). ✅
+
+### 2.5 Class diagram fields match HF-2 schema
+
+`docs/diagrams/class/presets.md` shows:
+
+```
+PresetDefaults
+    +provider: str|None
+    +model: str|None
+    +...
+    +language: str|None
+    +number_lang: str|None
+    +voice: str|None
+```
+
+And mirrors the same three fields on `EffectiveSynthesisConfig`. ✅ Matches `services/presets/config.py:39-55` + `services/synthesize_service.py:79-105`.
+
+Narrative §3 explicitly calls out HF-2 expansion + the FR-PR-03 enablement workflow. ✅
+
+### 2.6 Sequence diagrams reflect the snapshot semantic
+
+- `preset-resolution.md` traces `Depends(get_preset_registry_snapshot) → resolve_preset → EffectiveSynthesisConfig → synthesize_core headers`. Matches the post-S-027-review wire-through fix at commit `b26d62f` (where the in-flight snapshot dependency was actually wired into both endpoints).
+- `preset-hot-reload.md` traces validation-before-swap + WARN-on-failure. Matches `PresetRegistryReloader.reload_once`.
+- `synthesize-rich.md` + `create-speech.md` correctly note the rich-only-header strip on the OpenAI adapter (FR-EP-04 + NFR-PT-05 paired-UAT note).
+
+✅ Diagrams are runtime-accurate.
+
+## 3. NFR-PT-05 — S-018 byte-identity invariant (sprint-level)
+
+| Check | Result |
+|---|---|
+| `git diff master -- tests/test_openai_adapter_parity.py` | empty (0 lines) — test file byte-identical to its cycle-1 form |
+| `uv run pytest tests/test_openai_adapter_parity.py -v` | 3 passed |
+| Rich (default `balanced` preset) ↔ OpenAI default path byte-identity | Held — the `balanced` preset has no pin on `provider` / `model` / `language` / `number_lang` / `voice`, so HF-2's `effective.*` fallback chain resolves to identical request fields as cycle-1. |
+| `X-Preset-Effective` / `X-Preset-Ignored-Knobs` strip on OpenAI adapter | Held — S-028 T4 extended `_RICH_ONLY_HEADERS`; parity test would fail if these leaked. |
+
+This is THE load-bearing assertion of cycle 2's first sprint. It survives all three hotfixes.
+
+## 4. Sprint-level items examined and explicitly cleared
+
+- **HF-2 `EffectiveSynthesisConfig` leaks into S-027's `PresetRegistry`?** No. The expansion lives in `synthesize_service.py` (S-028 territory). `PresetRegistry` only embeds `PresetEntry` which embeds `PresetDefaults`. The two shapes are intentionally distinct (one is config-shape, one is post-resolution-shape).
+- **HF-2 test fixture (`_stub_deps` adding `FakeTTSProvider(provider_name="mlx_audio")`) masks real failure modes?** No. The fixture change is the minimum necessary to keep `test_startup_preload.py` exercising the real `_load_presets_or_exit` path now that the shipped quality preset pins `mlx_audio`. Without the fake provider the test would fail on `validate_preset_providers` for the wrong reason. The pinned provider name MUST match for startup to succeed.
+- **HF-3 docstring rewrite on `TTSProviderRegistry` introduces a new call site from S-027 startup?** No. S-027's startup module uses only `provider_registry.names()` (`services/presets/startup.py:63`); `get()` is never invoked during preset validation.
+- **HF-1 docs claim something the runtime doesn't deliver?** Spot-checks in §2 above show docs are runtime-accurate. The single soft phrasing ("Conflicts … are recorded in `X-Preset-Effective` and logged at WARN") is defensible because the resolved value (e.g., `language=it`) does land in the header — the explicit conflict pair lives in the WARN log via `effective_overrides`. This is the original S-028 design, not a HF-1 regression.
+- **Permission posture (NFR-SE-09) regressed by hotfixes?** No. `check_presets_file_permissions` untouched; startup-only re-check (RISK-PR-3) still documented in HF-1's README; S-029 `test_reload_skips_permission_check` still green.
+- **The voice-CRUD examples in `examples.http` accidentally retire `ref_audio`?** No. `examples.http` correctly uses multipart `POST /v1/tts/voices` (voice-store-as-canonical per S-022); no `ref_audio` field appears in any rich-endpoint example. Matches the S-022 retirement.
+- **Quality preset's `response_format=flac` confuses clients?** Mitigated. README §"Audio presets" annotates "(soft-ignored — see note)" and §"Soft-ignore" explains it. examples.http annotates `X-Preset-Ignored-Knobs: response_format` on every quality-preset response. The behaviour is honest end-to-end: header surfaces the requested-but-ignored field; actual audio is WAV.
+
+## 5. Risks reviewed and confirmed mitigated
+
+| Risk | Mitigation post Path B | Status |
+|---|---|---|
+| NFR-PT-05 byte-identity (RISK-PR-5) | Parity tests stay 0-line-diff vs master; 3/3 pass; HF-2's resolver fallback chain keeps the default path bytewise-identical to cycle-1. | ✅ |
+| S-027 ↔ S-029 lifespan coupling | Untouched by hotfixes. | ✅ |
+| S-028 T3 ↔ S-029 T3 signature alignment | Resolver signature `resolve_preset(request, snapshot, settings)` preserved through HF-2. | ✅ |
+| `watchfiles` in Docker (RISK-3) | Untouched by hotfixes (same primitive). | ✅ |
+| Per-preset `(provider, model)` allow-list validation | HF-2's quality pin EXERCISES this seam end-to-end (not just unit-tested) — first shipped preset that actually depends on it. | ✅ Strengthened |
+| `PresetConfig` schema drift between S-027 and downstream cycle-2 | HF-2 demonstrates the additive expansion path works: three new fields, all-`None` defaults, `extra="forbid"` preserved, byte-identity preserved. Pattern is validated for future cycle-2 stories. | ✅ Validated |
+
+## 6. Recommendation
+
+**Sprint 7 is READY for human approval as a whole.**
+
+The Path B hotfixes did exactly what triage T-1..T-4 specified, with no scope creep and no contract drift:
+
+- HF-2 widened `PresetDefaults` by exactly three fields (T-3 scope) and demonstrated provider/model pinning via the shipped `quality` preset.
+- HF-3 enriched a single error message (T-1 scope) without touching the taxonomy.
+- HF-1 brought docs/diagrams/OpenAPI/examples.http up to current-master state (T-4 scope, narrowed to surfaces in master at HF-1 dispatch time per S-036-deferral discipline).
+
+The S-018 byte-identity invariant — the gate that the entire cycle-2 spine depends on — is intact. The locked Service Interface between S-027 / S-028 / S-029 is intact. Documentation accurately describes runtime behaviour. examples.http is a working operator-facing artefact that exercises the cycle-2 surface end-to-end.
+
+No further sprint-level rework required. Hand back to the sprint-coordinator for whole-sprint human approval and the final READY-FOR-REVIEW → DONE transition.
+
+## Sign-off
+
+- ✅ Cycle-2 spine (S-027 + S-028 + S-029) coheres with HF-2 schema expansion + HF-3 error change + HF-1 docs.
+- ✅ HF-1 documentation accurately describes HF-2 runtime behaviour (preset can pin provider+model; quality ships with `mlx_audio` + Qwen).
+- ✅ HF-1 examples.http uses default presets correctly (`balanced` for omitted-preset case; `quality` worked example; unknown-preset negative; HF-3 wrong-provider negative).
+- ✅ No cross-story drift detected at sprint level.
+- ✅ NFR-PT-05 byte-identity invariant intact (parity tests 0-line-diff, 3/3 pass).
+- ✅ Full suite + mypy + ruff all green.
+
